@@ -5,6 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import google.generativeai as genai
 from PIL import Image
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. 必须放在第一行的配置 ---
 st.set_page_config(page_title="Smart Asset Pro", page_icon="💳", layout="wide")
@@ -397,3 +399,4 @@ with tab4:
             run_query("DELETE FROM transactions")
             st.warning("数据已清空")
             st.rerun()
+
