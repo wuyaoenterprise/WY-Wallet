@@ -375,7 +375,25 @@ with tab3:
 
 # === Tab 4: 设置 ===
 with tab4:
-    st.write("如需管理类别，请直接修改数据库或联系管理员。")
-    if st.button("⚠️ 清空所有数据"):
-        run_query("DELETE FROM transactions")
-        st.warning("数据已清空")
+    st.header("⚙️ 系统设置")
+    
+    # 1. 备份区
+    with st.container(border=True):
+        st.subheader("☁️ 云端备份")
+        st.info("将本地数据同步到 Google Sheets (表格名: MyExpensesDB)")
+        # ⚠️ 请确保你在 Google Drive 里创建了叫 'MyExpensesDB' 的表，并分享给了机器人邮箱
+        if st.button("开始备份到云端", type="primary"):
+            with st.spinner("正在连接 Google Cloud..."):
+                success, msg = backup_to_cloud("MyExpensesDB")
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+    
+    # 2. 危险操作区
+    st.markdown("---")
+    with st.expander("危险操作 (清空数据)"):
+        if st.button("⚠️ 清空所有本地记录"):
+            run_query("DELETE FROM transactions")
+            st.warning("数据已清空")
+            st.rerun()
