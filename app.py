@@ -9,9 +9,20 @@ from PIL import Image
 # --- 1. 必须放在第一行的配置 ---
 st.set_page_config(page_title="Smart Asset Pro", page_icon="💳", layout="wide")
 
-# --- 2. 核心配置区域 ---
-# ⚠️ 必须在这里填入你的 Key
-my_api_key = "AIzaSyBkHq76yk95hDw92F_B8fKIJv_l7dkh_2Y"
+# --- 核心配置 ---
+# ⚠️ 修改：不再直接写死 Key，而是从云端保险箱读取
+# 本地运行时，它会报错，除非你配置了本地 secrets（先不管本地，为了上线先这么改）
+try:
+    my_api_key = st.secrets["GOOGLE_API_KEY"]
+except:
+    # 这是一个备用方案，防止你在本地直接运行报错
+    # 但上传到 GitHub 前，请确保这里不要填真实的 Key，或者注释掉
+    my_api_key = "" 
+    st.error("未检测到密钥，请在 Streamlit Cloud 配置 Secrets")
+
+# 强制启动配置
+if my_api_key:
+    genai.configure(api_key=my_api_key)
 
 # 容错配置
 try:
