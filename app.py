@@ -147,19 +147,18 @@ init_db()
 tab1, tab2, tab3, tab4 = st.tabs(["📝 智能记账", "📊 报表分析", "📅 每日详情", "⚙️ 设置"])
 
 # === Tab 1: 记账 (安全版) ===
+# === Tab 1: 记账 (自动同步版) ===
 with tab1:
-    st.caption("📷 拍照后 AI 会自动列出所有商品清单")
+    st.caption("📷 拍照后自动同步到云端")
     
     with st.expander("📷 上传收据", expanded=True):
         uploaded_file = st.file_uploader("上传图片", type=['jpg', 'png', 'jpeg'], key="uploader_safe")
         
-        # 只有点击按钮才触发 AI，避免死循环
-        if uploaded_file and st.button("🚀 开始 AI 拆单识别", type="primary"):
+        if uploaded_file and st.button("🚀 开始 AI 识别", type="primary"):
             image = Image.open(uploaded_file)
             ai_data_list, error = ai_analyze_receipt(image)
             
             if ai_data_list:
-                # 清洗数据
                 clean_data = []
                 for item in ai_data_list:
                     try:
@@ -170,21 +169,18 @@ with tab1:
                     
                     clean_data.append({
                         "date": d_obj, 
-                        "item": item.get('item', '未知商品'),
+                        "item": item.get('item', '未知'),
                         "category": item.get('category', '其他'),
                         "amount": float(item.get('amount', 0.0)),
                         "type": "Expense",
                         "note": item.get('note', '')
                     })
                 
-                # 存入 Session State
                 st.session_state['pending_items'] = clean_data
-                st.success("识别成功！请在下方核对。")
-                # 注意：这里不再自动 rerun，避免死循环
+                st.success("识别成功！请核对。")
             elif error:
                 st.error(error)
 
-    # 结果展示区
     if 'pending_items' in st.session_state and st.session_state['pending_items']:
         st.divider()
         st.subheader("🧐 核对清单")
@@ -207,20 +203,28 @@ with tab1:
         )
         
         col1, col2 = st.columns([1, 1])
-        if col1.button("✅ 确认保存", type="primary"):
+        # --- 自动同步点 1 ---
+        if col1.button("✅ 确认并同步", type="primary"):
             count = 0
             for row in edited_df:
                 run_query("INSERT INTO transactions (date, item, category, type, amount, note) VALUES (?, ?, ?, ?, ?, ?)",
                           (row['date'], row['item'], row['category'], row['type'], row['amount'], row.get('note', '')))
                 count += 1
-            st.success(f"已保存 {count} 条记录！")
+            
+            # 这里的魔法：保存完立刻上传
+            st.toast("正在同步到 Google Sheets...", icon="☁️")
+            success, msg = backup_to_cloud("MyExpensesDB")
+            
+            if success:
+                st.success(f"已保存 {count} 条并同步到云端！")
+            else:
+                st.warning(f"本地保存成功，但云端同步失败: {msg}")
+
             del st.session_state['pending_items']
-            # 手动移除上传文件缓存，防止误触
             
         if col2.button("🗑️ 放弃"):
             del st.session_state['pending_items']
 
-    # 手动记账
     else:
         st.divider()
         st.caption("手动记账模式")
@@ -237,11 +241,20 @@ with tab1:
             it = st.text_input("项目")
             note = st.text_area("备注")
             
-            if st.form_submit_button("保存"):
+            # --- 自动同步点 2 ---
+            if st.form_submit_button("保存并同步"):
                 tx_type = "Expense" if t == "支出" else "Income"
                 run_query("INSERT INTO transactions (date, item, category, type, amount, note) VALUES (?, ?, ?, ?, ?, ?)",
                           (d, it, cat, tx_type, amt, note))
-                st.success("保存成功")
+                
+                # 这里的魔法：保存完立刻上传
+                st.toast("正在同步到 Google Sheets...", icon="☁️")
+                success, msg = backup_to_cloud("MyExpensesDB")
+                
+                if success:
+                    st.success("保存并同步成功！")
+                else:
+                    st.warning(f"本地保存成功，但云端同步失败: {msg}")
 
 # === Tab 2: 报表分析 (UI 优化版) ===
 with tab2:
@@ -443,3 +456,4 @@ with tab4:
             run_query("DELETE FROM transactions")
             st.warning("数据已清空")
             st.rerun()
+
