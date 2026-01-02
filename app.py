@@ -5,6 +5,7 @@ import plotly.express as px
 from datetime import datetime
 import google.generativeai as genai
 from PIL import Image
+# --- 补齐缺失的库 ---
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -13,12 +14,9 @@ st.set_page_config(page_title="Smart Asset Pro", page_icon="💳", layout="wide"
 
 # --- 核心配置 ---
 # ⚠️ 修改：不再直接写死 Key，而是从云端保险箱读取
-# 本地运行时，它会报错，除非你配置了本地 secrets（先不管本地，为了上线先这么改）
 try:
     my_api_key = st.secrets["GOOGLE_API_KEY"]
 except:
-    # 这是一个备用方案，防止你在本地直接运行报错
-    # 但上传到 GitHub 前，请确保这里不要填真实的 Key，或者注释掉
     my_api_key = "" 
     st.error("未检测到密钥，请在 Streamlit Cloud 配置 Secrets")
 
@@ -68,6 +66,52 @@ def run_query(query, params=(), fetch=False):
     except Exception as e:
         st.error(f"数据库错误: {e}")
         return []
+
+# --- 补齐缺失的备份函数 ---
+def backup_to_cloud(spreadsheet_name):
+    """将本地 SQLite 数据全量覆盖到 Google Sheets"""
+    try:
+        # 1. 连接 Google Sheets
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        
+        # 尝试读取机器人配置
+        if "gcp_service_account" not in st.secrets:
+            return False, "未找到机器人配置，请检查 Secrets 是否填写了 [gcp_service_account]"
+            
+        creds_dict = st.secrets["gcp_service_account"] 
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        # 2. 打开表格
+        try:
+            sh = client.open(spreadsheet_name)
+        except gspread.SpreadsheetNotFound:
+            return False, f"找不到名为 '{spreadsheet_name}' 的表格，请先去 Google Drive 创建并分享给机器人。"
+            
+        # 3. 读取本地所有数据
+        data = run_query("SELECT * FROM transactions", fetch=True)
+        if not data:
+            return True, "本地没有数据，无需备份。"
+            
+        df = pd.DataFrame(data, columns=['ID', '日期', '项目', '类别', '类型', '金额', '备注', '创建时间'])
+        
+        # 4. 写入云端 (使用 Transactions 工作表)
+        try:
+            ws = sh.worksheet("Transactions")
+        except:
+            ws = sh.add_worksheet(title="Transactions", rows=1000, cols=10)
+            
+        # 清空旧数据并写入新数据
+        ws.clear()
+        # 写入表头和内容
+        # Google Sheets 需要将 datetime 对象转为字符串，否则可能报错
+        df = df.astype(str) 
+        ws.update([df.columns.values.tolist()] + df.values.tolist())
+        
+        return True, f"成功备份 {len(df)} 条记录到云端！"
+        
+    except Exception as e:
+        return False, f"备份失败: {str(e)}"
 
 # --- 4. AI 智能识别逻辑 ---
 def ai_analyze_receipt(image):
@@ -399,4 +443,3 @@ with tab4:
             run_query("DELETE FROM transactions")
             st.warning("数据已清空")
             st.rerun()
-
