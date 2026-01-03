@@ -35,40 +35,47 @@ def load_data():
         st.error(f"读取失败: {e}")
         return pd.DataFrame()
 
+# --- 云端保存函数 ---
 def save_to_cloud(rows):
-    """批量追加数据到 Supabase，绝不覆盖旧数据"""
+    """批量追加数据，增加容错处理"""
     try:
         formatted_rows = []
         for r in rows:
             formatted_rows.append({
-                "date": str(r['date']),
-                "item": r['item'],
-                "category": r['category'],
-                "type": r['type'],
-                "amount": float(r['amount']),
-                "note": r.get('note', '')
+                "date": str(r.get('date', datetime.now().date())),
+                "item": str(r.get('item', '未知项目')),
+                "category": str(r.get('category', '其他')),
+                "type": str(r.get('type', 'Expense')), # 如果没有 type，默认给 Expense
+                "amount": float(r.get('amount', 0.0)),
+                "note": str(r.get('note', ''))
             })
+        # 写入 Supabase
         supabase.table("transactions").insert(formatted_rows).execute()
         return True
     except Exception as e:
         st.error(f"写入失败: {e}")
         return False
-
 # --- 4. AI 逻辑 ---
 def ai_analyze_receipt(image):
-    model = genai.GenerativeModel('gemini-2.5-flash') # 使用最新的 flash 模型
+    model = genai.GenerativeModel('gemini-2.0-flash-exp') 
     prompt = """
     你是一个精明的财务助理。请分析收据并将每一项拆分。
-    要求：输出严格的 JSON 数组，包含 date (YYYY-MM-DD), item, category, amount。
-    类别选其一：饮食、交通、购物、居住、娱乐、医疗、工资、投资、其他。
+    要求：输出严格的 JSON 数组。
+    必须包含字段：date (YYYY-MM-DD), item, category, amount, type。
+    注意：收据识别的项目，type 统一填写 "Expense"。
     """
     try:
-        with st.spinner('🤖 AI 正在识别中...'):
+        with st.spinner('🤖 AI 正在识别并标记类型...'):
             response = model.generate_content([prompt, image])
             text = response.text.strip().replace("```json", "").replace("```", "")
             import json
             data = json.loads(text)
-            return data if isinstance(data, list) else [data], None
+            # 确保每一行都有 type 字段，防止报错
+            if isinstance(data, list):
+                for item in data:
+                    if 'type' not in item:
+                        item['type'] = 'Expense'
+            return data, None
     except Exception as e:
         return None, f"AI 识别出错: {str(e)}"
 
@@ -142,5 +149,4 @@ with tab4:
     st.header("⚙️ 系统状态")
     st.write("🟢 数据库连接状态：Supabase 已连接")
     if st.button("🔥 强制同步刷新"):
-
         st.rerun()
