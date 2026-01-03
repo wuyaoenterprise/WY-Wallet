@@ -51,10 +51,9 @@ def delete_row(row_id):
     except Exception as e:
         st.error(f"删除失败: {e}")
 
-# ⚡️ 核心修复：增强版保存函数，兼容 DataFrame 和 列表
 def save_to_cloud(data_input):
     try:
-        # 如果传入的是 DataFrame（表格数据），先转成字典列表
+        # 兼容 DataFrame 转列表
         if isinstance(data_input, pd.DataFrame):
             rows = data_input.to_dict('records')
         else:
@@ -117,9 +116,9 @@ def ai_analyze_receipt(image):
         return None, f"请求出错: {str(e)}"
 
 # --- 5. 主程序 UI ---
-tab1, tab2, tab3 = st.tabs(["📝 记账与历史", "📊 深度报表", "⚙️ 设置"])
+tab1, tab2, tab3 = st.tabs(["📝 记账与历史", "📊 报表分析", "⚙️ 设置"])
 
-# === Tab 1: 左右排布 + 表格化历史记录 ===
+# === Tab 1: 记账 ===
 with tab1:
     col_left, col_right = st.columns([1, 1.8], gap="large")
 
@@ -135,26 +134,26 @@ with tab1:
         if 'pending_data' in st.session_state:
             st.info("💡 请核对结果 (类别可点击下拉修改)")
             
-            # ⚡️ 核心修复：先把数据转成 DataFrame 再喂给编辑器，防止崩溃
+            # ⚡️ 核心防崩修复：先转 DataFrame 并强制转换类型
             df_pending = pd.DataFrame(st.session_state['pending_data'])
             
-            # 确保日期和金额的类型正确
             if not df_pending.empty:
+                # 强制转为日期对象，防止字符串导致的编辑器崩溃
                 if 'date' in df_pending.columns:
                     df_pending['date'] = pd.to_datetime(df_pending['date'])
+                # 强制转为浮点数
                 if 'amount' in df_pending.columns:
-                    df_pending['amount'] = df_pending['amount'].astype(float)
+                    df_pending['amount'] = pd.to_numeric(df_pending['amount'], errors='coerce').fillna(0.0)
             
             current_options = get_categories()
             
             edited = st.data_editor(
-                df_pending, # 这里传入处理好的 DataFrame
+                df_pending, 
                 num_rows="dynamic", 
                 use_container_width=True,
                 column_config={
                     "category": st.column_config.SelectboxColumn(
                         "类别",
-                        help="点击选择类别",
                         width="medium",
                         options=current_options,
                         required=True,
@@ -188,7 +187,7 @@ with tab1:
                     else:
                         st.warning("⚠️ 请输入金额")
 
-    # --- 右侧：历史记录 (日期清晰版) ---
+    # --- 右侧：历史记录 (清晰表格版) ---
     with col_right:
         st.subheader("📜 历史记录")
         df_all = load_data()
@@ -220,20 +219,13 @@ with tab1:
                 for _, row in df_filtered.iterrows():
                     c1, c2, c3, c4, c5 = st.columns([1.2, 2, 1.2, 1, 0.6])
                     
-                    # 1. 日期 (独立一列，不再混淆)
                     c1.write(row['date'].strftime('%Y-%m-%d'))
-                    
-                    # 2. 项目
                     c2.write(row['item'])
-                    
-                    # 3. 类别
                     c3.caption(row['category'])
                     
-                    # 4. 金额
                     color = "red" if row['type'] == "Expense" else "green"
                     c4.markdown(f":{color}[{row['amount']:.2f}]")
                     
-                    # 5. 删除按钮
                     if c5.button("🗑️", key=f"del_{row['id']}"):
                         delete_row(row['id'])
                     
@@ -243,59 +235,84 @@ with tab1:
         else:
             st.info("暂无数据")
 
-# === Tab 2: 深度报表 (图表锁定版) ===
+# === Tab 2: 报表分析 (新增指标卡) ===
 with tab2:
     if not df_all.empty:
-        st.subheader("📊 每日支出")
         
+        # 1. 筛选器
         b_c1, b_c2 = st.columns(2)
         b_year = b_c1.selectbox("年份", u_years, key="b_y")
         b_month = b_c2.selectbox("月份", range(1, 13), index=datetime.now().month-1, key="b_m")
         
+        # 2. 筛选数据
         df_all['day'] = df_all['date'].dt.day
-        plot_mask = (df_all['date'].dt.year == b_year) & (df_all['date'].dt.month == b_month) & (df_all['type'] == 'Expense')
-        df_plot = df_all[plot_mask]
+        # 基础过滤：选定年月的
+        month_mask = (df_all['date'].dt.year == b_year) & (df_all['date'].dt.month == b_month)
+        df_month = df_all[month_mask]
         
-        # 过滤负数
-        df_plot = df_plot[df_plot['amount'] > 0]
-        
-        if not df_plot.empty:
-            daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
-            last_day = calendar.monthrange(b_year, b_month)[1]
-
-            # 柱状图 (锁死坐标轴)
-            fig = px.bar(
-                daily_data, x='day', y='amount', color='category', 
-                title=f"{b_year}年{b_month}月 每日分布",
-                labels={'day':'日期', 'amount':'金额', 'category':'类别'},
-                text_auto='.0f', template="plotly_dark"
-            )
-            fig.update_xaxes(
-                tickmode='linear', tick0=1, dtick=1, 
-                range=[0.5, last_day + 0.5],
-                fixedrange=True # 🔒 锁死X轴
-            )
-            fig.update_yaxes(fixedrange=True) # 🔒 锁死Y轴
-            
-            st.plotly_chart(
-                fig, 
-                use_container_width=True, 
-                config={'displayModeBar': False}
-            )
-            
+        if not df_month.empty:
+            # --- 💡 新增：KPI 指标卡 ---
             st.divider()
             
-            # 甜甜圈图 (百分比外显)
-            fig_pie = px.pie(df_plot, values='amount', names='category', hole=0.5, title="支出构成")
-            fig_pie.update_traces(textposition='outside', textinfo='percent+label')
+            # 计算总额
+            income = df_month[df_month['type'] == 'Income']['amount'].sum()
+            expense = df_month[df_month['type'] == 'Expense']['amount'].sum()
+            balance = income - expense
             
-            st.plotly_chart(
-                fig_pie, 
-                use_container_width=True, 
-                config={'displayModeBar': False}
-            )
+            # 渲染 3 列大数字
+            k1, k2, k3 = st.columns(3)
+            k1.metric("💰 总收入", f"{income:,.2f}")
+            k2.metric("💸 总支出", f"{expense:,.2f}")
+            k3.metric("🏦 结余", f"{balance:,.2f}", delta=balance)
+            
+            st.divider()
+
+            # --- 图表数据准备 ---
+            # 过滤出支出用于画图
+            df_expense = df_month[df_month['type'] == 'Expense']
+            # 剔除负数金额 (避免图表坏掉)
+            df_expense = df_expense[df_expense['amount'] > 0]
+            
+            if not df_expense.empty:
+                daily_data = df_expense.groupby(['day', 'category'])['amount'].sum().reset_index()
+                last_day = calendar.monthrange(b_year, b_month)[1]
+
+                st.subheader("📊 每日支出分布")
+                # 柱状图 (锁死坐标轴)
+                fig = px.bar(
+                    daily_data, x='day', y='amount', color='category', 
+                    labels={'day':'日期', 'amount':'金额', 'category':'类别'},
+                    text_auto='.0f', template="plotly_dark"
+                )
+                fig.update_xaxes(
+                    tickmode='linear', tick0=1, dtick=1, 
+                    range=[0.5, last_day + 0.5],
+                    fixedrange=True # 🔒 锁死X轴
+                )
+                fig.update_yaxes(fixedrange=True) # 🔒 锁死Y轴
+                
+                st.plotly_chart(
+                    fig, 
+                    use_container_width=True, 
+                    config={'displayModeBar': False} # 隐藏工具栏
+                )
+                
+                st.divider()
+                
+                # 甜甜圈图 (百分比外显)
+                st.subheader("🍩 支出构成")
+                fig_pie = px.pie(df_expense, values='amount', names='category', hole=0.5)
+                fig_pie.update_traces(textposition='outside', textinfo='percent+label')
+                
+                st.plotly_chart(
+                    fig_pie, 
+                    use_container_width=True, 
+                    config={'displayModeBar': False}
+                )
+            else:
+                st.info("该月没有支出记录")
         else:
-            st.warning("该月无有效支出")
+            st.warning("该月无任何数据")
 
 # === Tab 3: 设置 ===
 with tab3:
