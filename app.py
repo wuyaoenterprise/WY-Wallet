@@ -106,7 +106,7 @@ with tab1:
             if data: st.session_state['pending_data'] = data
             else: st.error(err)
 
-        if 'pending_data' in st.session_state:
+        iif 'pending_data' in st.session_state:
             st.info("💡 核对识别结果（已翻译为中文）")
             edited = st.data_editor(st.session_state['pending_data'], num_rows="dynamic", use_container_width=True)
             if st.button("✅ 确认同步到云端"):
@@ -115,15 +115,12 @@ with tab1:
                     del st.session_state['pending_data']
                     st.rerun()
 
- with st.expander("➕ 手动记账"):
+        # 👈 确保这里和上面的 if 垂直对齐
+        with st.expander("➕ 手动记账"):
             with st.form("manual_form"):
                 d_in = st.date_input("日期", date.today())
                 it_in = st.text_input("项目名称")
-                
-                # --- 把这里原来的死列表换成函数获取 ---
-                cat_options = get_categories()
-                cat_in = st.selectbox("类别", cat_options)
-                
+                cat_in = st.selectbox("类别", get_categories())
                 t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
                 amt_in = st.number_input("金额 (RM)", min_value=0.0)
                 if st.form_submit_button("立即存入"):
@@ -157,20 +154,23 @@ with tab1:
                 h_cols[4].caption("**金额**")
                 h_cols[5].caption("**操作**")
 
-                # 动态生成每一行，实现“在红圈处删除”
+               # 动态生成每一行，针对手机端优化
                 for _, row in df_filtered.iterrows():
-                    r_cols = st.columns([0.5, 1, 1.5, 1, 1, 0.5])
-                    r_cols[0].write(f"`{row['id']}`")
-                    r_cols[1].write(row['date'].strftime('%m-%d'))
-                    r_cols[2].write(row['item'])
-                    r_cols[3].write(row['category'])
-                    # 根据类型显示颜色
-                    color = "red" if row['type'] == "Expense" else "green"
-                    r_cols[4].write(f":{color}[RM {row['amount']:.2f}]")
+                    # 手机端只分 3 列：项目(含日期类别)、金额、删除
+                    r_cols = st.columns([2, 1, 0.5])
                     
-                    # 💡 这就是你要的红圈删除按钮
-                    if r_cols[5].button("🗑️", key=f"del_{row['id']}", help="永久删除此行"):
+                    # 第一列：项目名称 + 小字描述（日期和类别）
+                    r_cols[0].markdown(f"**{row['item']}**\n:grey[{row['date'].strftime('%m-%d')} | {row['category']}]")
+                    
+                    # 第二列：金额（带颜色）
+                    color = "red" if row['type'] == "Expense" else "green"
+                    r_cols[1].write(f":{color}[RM{row['amount']:.2f}]")
+                    
+                    # 第三列：垃圾桶按钮
+                    if r_cols[2].button("🗑️", key=f"del_{row['id']}"):
                         delete_row(row['id'])
+                    
+                    st.divider() # 加一条横线区分每一行，手机查阅更清晰
             else:
                 st.info(f"{sel_y}年{sel_m}月 暂无数据")
         else:
@@ -224,7 +224,18 @@ with tab2:
             st.divider()
             # 支出占比饼图
             fig_pie = px.pie(df_plot, values='amount', names='category', hole=0.5, title="本月支出构成")
-            st.plotly_chart(fig_pie, use_container_width=True)
+            # 加上配置参数，防止手机误触导致图表跑掉
+            st.plotly_chart(
+                fig, 
+                use_container_width=True,
+                config={
+                    'staticPlot': False,      # 如果设为 True 就完全不能动，这里设为 False 但限制缩放
+                    'scrollZoom': False,      # 禁止滚轮缩放
+                    'displayModeBar': False,  # 隐藏上方工具栏
+                    'showAxisDragHandles': False, # 禁止拖动坐标轴
+                    'doubleClick': 'reset'    # 双击重置
+                }
+            )
         else:
             st.warning("该月份没有支出记录，无法生成报表。")
             
@@ -255,6 +266,7 @@ with tab3:
     st.divider()
     st.write(f"🟢 云端连接状态: Supabase 正常连接中")
     # ... 其他设置 ...
+
 
 
 
