@@ -6,7 +6,7 @@ import google.generativeai as genai
 from PIL import Image
 from supabase import create_client, Client
 import calendar
-import json # 引入 json 库
+import json 
 
 # --- 1. 页面配置 ---
 st.set_page_config(page_title="Smart Asset Pro", page_icon="💳", layout="wide")
@@ -69,13 +69,11 @@ def save_to_cloud(rows):
         st.error(f"保存失败: {e}")
         return False
 
-# --- 4. AI 翻译逻辑 (强力修复版) ---
+# --- 4. AI 翻译逻辑 ---
 def ai_analyze_receipt(image):
     current_cats = get_categories()
     
-    # ⚠️ 优先使用你指定的 gemini-2.5-flash
-    # 如果 Google 还没有发布这个名字的模型，这里会报错。
-    # 建议：如果一直报错，请尝试改回 'gemini-2.0-flash-exp' 或 'gemini-1.5-flash'
+    # 锁定 2.5 flash
     model_name = 'gemini-2.5-flash' 
     
     try:
@@ -85,7 +83,7 @@ def ai_analyze_receipt(image):
         你是一个精明的财务助理。分析收据并将每一项拆分。
         要求：
         1. 必须将 item(项目名称) 翻译成简练的中文。
-        2. 输出纯粹的 JSON 数组格式，不要包含任何 Markdown 标记（如 ```json）。
+        2. 输出纯粹的 JSON 数组格式，不要包含任何 Markdown 标记。
         3. 格式示例：[{{"date": "YYYY-MM-DD", "item": "中文名称", "category": "类别", "amount": 10.5, "type": "Expense"}}]
         4. 类别(category)必须从以下列表中选择: {", ".join(current_cats)}
         """
@@ -93,26 +91,19 @@ def ai_analyze_receipt(image):
         with st.spinner(f'🤖 AI ({model_name}) 正在识别...'):
             response = model.generate_content([prompt, image])
             
-            # --- 核心调试逻辑 ---
             if not response.text:
-                return None, "AI 返回了空内容，可能是被安全拦截。"
+                return None, "AI 返回了空内容"
             
-            # 清洗数据：去掉可能存在的 markdown 符号
             raw_text = response.text.strip()
-            if raw_text.startswith("```json"):
-                raw_text = raw_text[7:]
-            if raw_text.startswith("```"):
-                raw_text = raw_text[3:]
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3]
+            if raw_text.startswith("```json"): raw_text = raw_text[7:]
+            if raw_text.startswith("```"): raw_text = raw_text[3:]
+            if raw_text.endswith("```"): raw_text = raw_text[:-3]
             
-            # 尝试解析
             try:
                 data = json.loads(raw_text.strip())
                 return data, None
             except json.JSONDecodeError:
-                # 如果解析失败，把 AI 返回的原始文字显示出来，方便找原因
-                return None, f"解析失败。AI 返回的不是 JSON，而是：\n{raw_text}"
+                return None, f"解析失败: {raw_text}"
                 
     except Exception as e:
         return None, f"请求出错: {str(e)}"
@@ -120,7 +111,7 @@ def ai_analyze_receipt(image):
 # --- 5. 主程序 UI ---
 tab1, tab2, tab3 = st.tabs(["📝 记账与历史", "📊 深度报表", "⚙️ 设置"])
 
-# === Tab 1: 左右排布 + 行内删除 ===
+# === Tab 1: 左右排布 + 表格化历史记录 ===
 with tab1:
     col_left, col_right = st.columns([1, 1.8], gap="large")
 
@@ -134,8 +125,28 @@ with tab1:
             else: st.error(err)
 
         if 'pending_data' in st.session_state:
-            st.info("💡 核对识别结果")
-            edited = st.data_editor(st.session_state['pending_data'], num_rows="dynamic", use_container_width=True)
+            st.info("💡 请核对识别结果 (点击类别可下拉选择)")
+            
+            current_options = get_categories()
+            
+            edited = st.data_editor(
+                st.session_state['pending_data'], 
+                num_rows="dynamic", 
+                use_container_width=True,
+                column_config={
+                    "category": st.column_config.SelectboxColumn(
+                        "类别",
+                        help="点击选择类别",
+                        width="medium",
+                        options=current_options,
+                        required=True,
+                    ),
+                    "date": st.column_config.DateColumn("日期"),
+                    "amount": st.column_config.NumberColumn("金额 (RM)", format="%.2f"),
+                    "type": st.column_config.SelectboxColumn("类型", options=["Expense", "Income"])
+                }
+            )
+            
             if st.button("✅ 确认同步到云端"):
                 if save_to_cloud(edited):
                     st.success("同步成功！")
@@ -149,19 +160,16 @@ with tab1:
                 it_in = st.text_input("项目名称")
                 cat_in = st.selectbox("类别", get_categories())
                 t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
-                
-                # 金额框留空
                 amt_in = st.number_input("金额 (RM)", min_value=0.0, step=0.01, value=None, placeholder="输入金额...")
                 
                 if st.form_submit_button("立即存入"):
-                    # 只有金额有效才存入
                     if amt_in is not None:
                         if save_to_cloud([{"date":d_in, "item":it_in, "category":cat_in, "type":t_in, "amount":amt_in}]):
                             st.rerun()
                     else:
                         st.warning("⚠️ 请输入金额")
 
-    # --- 右侧：详细历史 (排版优化) ---
+    # --- 右侧：历史记录 (清晰表格版) ---
     with col_right:
         st.subheader("📜 历史记录")
         df_all = load_data()
@@ -179,33 +187,37 @@ with tab1:
             if not df_filtered.empty:
                 st.markdown("---")
                 
-                # 循环渲染每一行
+                # 表头
+                h1, h2, h3, h4, h5 = st.columns([1.5, 2, 1.5, 1, 0.8])
+                h1.markdown("**📅 日期**")
+                h2.markdown("**📝 项目**")
+                h3.markdown("**🏷️ 类别**")
+                h4.markdown("**💰 金额**")
+                h5.markdown("**操作**")
+                
+                st.divider()
+
+                # 循环渲染
                 for _, row in df_filtered.iterrows():
-                    # ⚡️ 调整比例：让左边的信息占更多，中间是金额，右边给删除按钮留小位置
-                    r_cols = st.columns([3, 1.2, 0.5])
+                    c1, c2, c3, c4, c5 = st.columns([1.5, 2, 1.5, 1, 0.8])
                     
-                    # 1. 项目 + 日期 + 类别 (显示更紧凑)
-                    with r_cols[0]:
-                        st.markdown(f"**{row['item']}**")
-                        st.caption(f"{row['date'].strftime('%m-%d')} | {row['category']}")
+                    c1.write(row['date'].strftime('%Y-%m-%d'))
+                    c2.write(row['item'])
+                    c3.caption(row['category'])
                     
-                    # 2. 金额 (垂直居中不好做，但这样显示很清晰)
-                    with r_cols[1]:
-                        color = "red" if row['type'] == "Expense" else "green"
-                        st.markdown(f":{color}[**RM {row['amount']:.2f}**]")
+                    color = "red" if row['type'] == "Expense" else "green"
+                    c4.markdown(f":{color}[{row['amount']:.2f}]")
                     
-                    # 3. 删除按钮
-                    with r_cols[2]:
-                        if st.button("🗑️", key=f"del_{row['id']}"):
-                            delete_row(row['id'])
+                    if c5.button("🗑️", key=f"del_{row['id']}"):
+                        delete_row(row['id'])
                     
-                    st.divider()
+                    st.markdown("<hr style='margin: 5px 0; opacity: 0.3;'>", unsafe_allow_html=True)
             else:
                 st.info("本月无数据")
         else:
             st.info("暂无数据")
 
-# === Tab 2: 深度报表 ===
+# === Tab 2: 深度报表 (图表修复版) ===
 with tab2:
     if not df_all.empty:
         st.subheader("📊 每日支出")
@@ -218,6 +230,9 @@ with tab2:
         plot_mask = (df_all['date'].dt.year == b_year) & (df_all['date'].dt.month == b_month) & (df_all['type'] == 'Expense')
         df_plot = df_all[plot_mask]
         
+        # ⚠️ 关键过滤：只保留金额大于0的数据，防止负数（折扣）破坏图表
+        df_plot = df_plot[df_plot['amount'] > 0]
+        
         if not df_plot.empty:
             daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
             last_day = calendar.monthrange(b_year, b_month)[1]
@@ -229,19 +244,37 @@ with tab2:
                 labels={'day':'日期', 'amount':'金额', 'category':'类别'},
                 text_auto='.0f', template="plotly_dark"
             )
-            fig.update_xaxes(tickmode='linear', tick0=1, dtick=1, range=[0.5, last_day + 0.5])
             
-            st.plotly_chart(fig, use_container_width=True, config={'staticPlot': False, 'scrollZoom': False, 'displayModeBar': False})
+            # 1. 强制 1-31 号 X 轴
+            fig.update_xaxes(
+                tickmode='linear', tick0=1, dtick=1, 
+                range=[0.5, last_day + 0.5],
+                fixedrange=True # 🔒 锁死 X 轴，防止拖动
+            )
+            
+            # 2. 锁死 Y 轴，防止缩放
+            fig.update_yaxes(fixedrange=True)
+            
+            # 3. 配置 Config
+            st.plotly_chart(
+                fig, 
+                use_container_width=True, 
+                config={'displayModeBar': False} # 隐藏工具栏
+            )
             
             st.divider()
             
-            # 甜甜圈图 (带百分比)
+            # 甜甜圈图
             fig_pie = px.pie(df_plot, values='amount', names='category', hole=0.5, title="支出构成")
             fig_pie.update_traces(textposition='outside', textinfo='percent+label')
             
-            st.plotly_chart(fig_pie, use_container_width=True, config={'staticPlot': False, 'scrollZoom': False, 'displayModeBar': False})
+            st.plotly_chart(
+                fig_pie, 
+                use_container_width=True, 
+                config={'displayModeBar': False}
+            )
         else:
-            st.warning("该月无支出")
+            st.warning("该月无有效支出（或金额均为0/负数）")
 
 # === Tab 3: 设置 ===
 with tab3:
