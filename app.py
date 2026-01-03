@@ -74,7 +74,7 @@ def ai_analyze_receipt(image):
     # 先获取最新的类别列表
     current_cats = get_categories()
     
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    model = genai.GenerativeModel('gemini-2.5-flash') 
     prompt = f"""
     你是一个精明的财务助理。分析收据并将每一项拆分。
     要求：
@@ -248,3 +248,4 @@ with tab3:
             
     st.divider()
     st.write(f"🟢 Supabase 连接正常")
+
