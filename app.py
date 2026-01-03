@@ -106,7 +106,7 @@ with tab1:
             if data: st.session_state['pending_data'] = data
             else: st.error(err)
 
-        iif 'pending_data' in st.session_state:
+        if 'pending_data' in st.session_state:
             st.info("💡 核对识别结果（已翻译为中文）")
             edited = st.data_editor(st.session_state['pending_data'], num_rows="dynamic", use_container_width=True)
             if st.button("✅ 确认同步到云端"):
@@ -266,6 +266,7 @@ with tab3:
     st.divider()
     st.write(f"🟢 云端连接状态: Supabase 正常连接中")
     # ... 其他设置 ...
+
 
 
 
