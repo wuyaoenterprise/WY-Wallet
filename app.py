@@ -56,7 +56,7 @@ def save_to_cloud(rows):
 
 # --- 4. AI 逻辑 ---
 def ai_analyze_receipt(image):
-    model = genai.GenerativeModel('gemini-2.0-flash') # 使用最新的 flash 模型
+    model = genai.GenerativeModel('gemini-2.5-flash') # 使用最新的 flash 模型
     prompt = """
     你是一个精明的财务助理。请分析收据并将每一项拆分。
     要求：输出严格的 JSON 数组，包含 date (YYYY-MM-DD), item, category, amount。
@@ -142,4 +142,5 @@ with tab4:
     st.header("⚙️ 系统状态")
     st.write("🟢 数据库连接状态：Supabase 已连接")
     if st.button("🔥 强制同步刷新"):
+
         st.rerun()
