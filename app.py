@@ -51,8 +51,15 @@ def delete_row(row_id):
     except Exception as e:
         st.error(f"删除失败: {e}")
 
-def save_to_cloud(rows):
+# ⚡️ 核心修复：增强版保存函数，兼容 DataFrame 和 列表
+def save_to_cloud(data_input):
     try:
+        # 如果传入的是 DataFrame（表格数据），先转成字典列表
+        if isinstance(data_input, pd.DataFrame):
+            rows = data_input.to_dict('records')
+        else:
+            rows = data_input
+
         formatted = []
         for r in rows:
             formatted.append({
@@ -73,7 +80,7 @@ def save_to_cloud(rows):
 def ai_analyze_receipt(image):
     current_cats = get_categories()
     
-    # 锁定 2.5 flash
+    # 锁定 gemini-2.5-flash
     model_name = 'gemini-2.5-flash' 
     
     try:
@@ -83,7 +90,7 @@ def ai_analyze_receipt(image):
         你是一个精明的财务助理。分析收据并将每一项拆分。
         要求：
         1. 必须将 item(项目名称) 翻译成简练的中文。
-        2. 输出纯粹的 JSON 数组格式，不要包含任何 Markdown 标记。
+        2. 输出纯粹的 JSON 数组格式，不要包含 Markdown 标记。
         3. 格式示例：[{{"date": "YYYY-MM-DD", "item": "中文名称", "category": "类别", "amount": 10.5, "type": "Expense"}}]
         4. 类别(category)必须从以下列表中选择: {", ".join(current_cats)}
         """
@@ -95,6 +102,7 @@ def ai_analyze_receipt(image):
                 return None, "AI 返回了空内容"
             
             raw_text = response.text.strip()
+            # 清理 Markdown
             if raw_text.startswith("```json"): raw_text = raw_text[7:]
             if raw_text.startswith("```"): raw_text = raw_text[3:]
             if raw_text.endswith("```"): raw_text = raw_text[:-3]
@@ -125,12 +133,22 @@ with tab1:
             else: st.error(err)
 
         if 'pending_data' in st.session_state:
-            st.info("💡 请核对识别结果 (点击类别可下拉选择)")
+            st.info("💡 请核对结果 (类别可点击下拉修改)")
+            
+            # ⚡️ 核心修复：先把数据转成 DataFrame 再喂给编辑器，防止崩溃
+            df_pending = pd.DataFrame(st.session_state['pending_data'])
+            
+            # 确保日期和金额的类型正确
+            if not df_pending.empty:
+                if 'date' in df_pending.columns:
+                    df_pending['date'] = pd.to_datetime(df_pending['date'])
+                if 'amount' in df_pending.columns:
+                    df_pending['amount'] = df_pending['amount'].astype(float)
             
             current_options = get_categories()
             
             edited = st.data_editor(
-                st.session_state['pending_data'], 
+                df_pending, # 这里传入处理好的 DataFrame
                 num_rows="dynamic", 
                 use_container_width=True,
                 column_config={
@@ -141,7 +159,7 @@ with tab1:
                         options=current_options,
                         required=True,
                     ),
-                    "date": st.column_config.DateColumn("日期"),
+                    "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD"),
                     "amount": st.column_config.NumberColumn("金额 (RM)", format="%.2f"),
                     "type": st.column_config.SelectboxColumn("类型", options=["Expense", "Income"])
                 }
@@ -160,6 +178,7 @@ with tab1:
                 it_in = st.text_input("项目名称")
                 cat_in = st.selectbox("类别", get_categories())
                 t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
+                # 默认留空
                 amt_in = st.number_input("金额 (RM)", min_value=0.0, step=0.01, value=None, placeholder="输入金额...")
                 
                 if st.form_submit_button("立即存入"):
@@ -169,7 +188,7 @@ with tab1:
                     else:
                         st.warning("⚠️ 请输入金额")
 
-    # --- 右侧：历史记录 (清晰表格版) ---
+    # --- 右侧：历史记录 (日期清晰版) ---
     with col_right:
         st.subheader("📜 历史记录")
         df_all = load_data()
@@ -187,8 +206,8 @@ with tab1:
             if not df_filtered.empty:
                 st.markdown("---")
                 
-                # 表头
-                h1, h2, h3, h4, h5 = st.columns([1.5, 2, 1.5, 1, 0.8])
+                # 表头：明确显示日期
+                h1, h2, h3, h4, h5 = st.columns([1.2, 2, 1.2, 1, 0.6])
                 h1.markdown("**📅 日期**")
                 h2.markdown("**📝 项目**")
                 h3.markdown("**🏷️ 类别**")
@@ -197,17 +216,24 @@ with tab1:
                 
                 st.divider()
 
-                # 循环渲染
+                # 循环渲染每一行
                 for _, row in df_filtered.iterrows():
-                    c1, c2, c3, c4, c5 = st.columns([1.5, 2, 1.5, 1, 0.8])
+                    c1, c2, c3, c4, c5 = st.columns([1.2, 2, 1.2, 1, 0.6])
                     
+                    # 1. 日期 (独立一列，不再混淆)
                     c1.write(row['date'].strftime('%Y-%m-%d'))
+                    
+                    # 2. 项目
                     c2.write(row['item'])
+                    
+                    # 3. 类别
                     c3.caption(row['category'])
                     
+                    # 4. 金额
                     color = "red" if row['type'] == "Expense" else "green"
                     c4.markdown(f":{color}[{row['amount']:.2f}]")
                     
+                    # 5. 删除按钮
                     if c5.button("🗑️", key=f"del_{row['id']}"):
                         delete_row(row['id'])
                     
@@ -217,7 +243,7 @@ with tab1:
         else:
             st.info("暂无数据")
 
-# === Tab 2: 深度报表 (图表修复版) ===
+# === Tab 2: 深度报表 (图表锁定版) ===
 with tab2:
     if not df_all.empty:
         st.subheader("📊 每日支出")
@@ -230,41 +256,36 @@ with tab2:
         plot_mask = (df_all['date'].dt.year == b_year) & (df_all['date'].dt.month == b_month) & (df_all['type'] == 'Expense')
         df_plot = df_all[plot_mask]
         
-        # ⚠️ 关键过滤：只保留金额大于0的数据，防止负数（折扣）破坏图表
+        # 过滤负数
         df_plot = df_plot[df_plot['amount'] > 0]
         
         if not df_plot.empty:
             daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
             last_day = calendar.monthrange(b_year, b_month)[1]
 
-            # 柱状图
+            # 柱状图 (锁死坐标轴)
             fig = px.bar(
                 daily_data, x='day', y='amount', color='category', 
                 title=f"{b_year}年{b_month}月 每日分布",
                 labels={'day':'日期', 'amount':'金额', 'category':'类别'},
                 text_auto='.0f', template="plotly_dark"
             )
-            
-            # 1. 强制 1-31 号 X 轴
             fig.update_xaxes(
                 tickmode='linear', tick0=1, dtick=1, 
                 range=[0.5, last_day + 0.5],
-                fixedrange=True # 🔒 锁死 X 轴，防止拖动
+                fixedrange=True # 🔒 锁死X轴
             )
+            fig.update_yaxes(fixedrange=True) # 🔒 锁死Y轴
             
-            # 2. 锁死 Y 轴，防止缩放
-            fig.update_yaxes(fixedrange=True)
-            
-            # 3. 配置 Config
             st.plotly_chart(
                 fig, 
                 use_container_width=True, 
-                config={'displayModeBar': False} # 隐藏工具栏
+                config={'displayModeBar': False}
             )
             
             st.divider()
             
-            # 甜甜圈图
+            # 甜甜圈图 (百分比外显)
             fig_pie = px.pie(df_plot, values='amount', names='category', hole=0.5, title="支出构成")
             fig_pie.update_traces(textposition='outside', textinfo='percent+label')
             
@@ -274,7 +295,7 @@ with tab2:
                 config={'displayModeBar': False}
             )
         else:
-            st.warning("该月无有效支出（或金额均为0/负数）")
+            st.warning("该月无有效支出")
 
 # === Tab 3: 设置 ===
 with tab3:
