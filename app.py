@@ -61,7 +61,7 @@ def save_to_cloud(rows):
 
 # --- 4. AI 翻译逻辑 ---
 def ai_analyze_receipt(image):
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    model = genai.GenerativeModel('gemini-2.5-flash') 
     prompt = """
     你是一个精明的财务助理。分析收据并将每一项拆分。
     要求：
@@ -218,3 +218,4 @@ with tab3:
     st.info("数据已存储在云端，Reboot 或代码更新后数据依然存在。")
     if st.button("🔄 强制刷新"):
         st.rerun()
+
