@@ -32,7 +32,15 @@ def load_data():
         return df
     except:
         return pd.DataFrame()
-
+        
+# --- 在这里插入 ---
+def get_categories():
+    try:
+        res = supabase.table("categories").select("name").execute()
+        return [c['name'] for c in res.data]
+    except:
+        return ["饮食", "交通", "购物", "居住", "娱乐", "医疗", "其他"] # 报错时的兜底
+        
 def delete_row(row_id):
     try:
         supabase.table("transactions").delete().eq("id", row_id).execute()
@@ -61,14 +69,18 @@ def save_to_cloud(rows):
 
 # --- 4. AI 翻译逻辑 ---
 def ai_analyze_receipt(image):
-    model = genai.GenerativeModel('gemini-2.5-flash') 
-    prompt = """
+    # 先获取最新的类别列表
+    current_cats = get_categories()
+    
+    model = genai.GenerativeModel('gemini-1.5-flash') 
+    prompt = f"""
     你是一个精明的财务助理。分析收据并将每一项拆分。
     要求：
-    1. 必须将 item(项目名称) 翻译成简练的中文。
-    2. 输出严格 JSON 数组格式。包含：date (YYYY-MM-DD), item, category, amount, type。
-    3. 类型(type)统一填写 "Expense"。
+    1. 必须将项目名称(item)翻译成简练的中文。
+    2. 输出 JSON 数组：[{"date": "YYYY-MM-DD", "item": "中文名称", "category": "类别", "amount": 10.5, "type": "Expense"}]
+    3. 类别(category)必须从以下列表中选择: {", ".join(current_cats)}
     """
+    # ... 剩下的代码不变 ...
     try:
         with st.spinner('🤖 AI 正在识别并翻译成中文...'):
             response = model.generate_content([prompt, image])
@@ -103,11 +115,15 @@ with tab1:
                     del st.session_state['pending_data']
                     st.rerun()
 
-        with st.expander("➕ 手动记账"):
+ with st.expander("➕ 手动记账"):
             with st.form("manual_form"):
                 d_in = st.date_input("日期", date.today())
                 it_in = st.text_input("项目名称")
-                cat_in = st.selectbox("类别", ["饮食", "交通", "购物", "居住", "娱乐", "医疗", "工资", "投资", "其他"])
+                
+                # --- 把这里原来的死列表换成函数获取 ---
+                cat_options = get_categories()
+                cat_in = st.selectbox("类别", cat_options)
+                
                 t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
                 amt_in = st.number_input("金额 (RM)", min_value=0.0)
                 if st.form_submit_button("立即存入"):
@@ -211,11 +227,35 @@ with tab2:
             st.plotly_chart(fig_pie, use_container_width=True)
         else:
             st.warning("该月份没有支出记录，无法生成报表。")
-
+            
 # === Tab 3: 设置 ===
 with tab3:
+    st.header("⚙️ 系统管理")
+    
+    # --- 类别管理逻辑 ---
+    st.subheader("🏷️ 类别管理")
+    current_cats = get_categories()
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        new_cat = st.text_input("✨ 添加新类别", placeholder="例如: 宠物")
+        if st.button("添加类别"):
+            if new_cat and new_cat not in current_cats:
+                supabase.table("categories").insert({"name": new_cat}).execute()
+                st.success(f"已添加: {new_cat}")
+                st.rerun()
+    
+    with c2:
+        cat_to_del = st.selectbox("🗑️ 删除现有类别", current_cats)
+        if st.button("确认删除", type="secondary"):
+            supabase.table("categories").delete().eq("name", cat_to_del).execute()
+            st.warning(f"已删除: {cat_to_del}")
+            st.rerun()
+            
+    st.divider()
     st.write(f"🟢 云端连接状态: Supabase 正常连接中")
-    st.info("数据已存储在云端，Reboot 或代码更新后数据依然存在。")
-    if st.button("🔄 强制刷新"):
-        st.rerun()
+    # ... 其他设置 ...
+
+
+
 
