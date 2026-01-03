@@ -58,7 +58,7 @@ def save_to_cloud(rows):
         
 # --- 4. AI 逻辑 ---
 def ai_analyze_receipt(image):
-    model = genai.GenerativeModel('gemini-2.5-flash-exp') 
+    model = genai.GenerativeModel('gemini-2.5-flash') 
     prompt = """
     你是一个精明的财务助理。请分析收据并将每一项拆分。
     要求：输出严格的 JSON 数组。
@@ -152,3 +152,4 @@ with tab4:
     if st.button("🔥 强制同步刷新"):
 
         st.rerun()
+
