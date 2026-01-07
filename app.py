@@ -251,6 +251,9 @@ with tab2:
         b_c1, b_c2 = st.columns(2)
         b_year = b_c1.selectbox("年份", u_years, key="b_y")
         b_month = b_c2.selectbox("月份", range(1, 13), index=datetime.now().month-1, key="b_m")
+
+        # ⚡️ 解决痛点 1：增加对数坐标开关，解决巨大支出压扁小支出的问题
+        use_log = b_c3.toggle("对数模式 (查看小额支出)", help="当某天支出巨大导致其他天看不清时，请开启此项")
         
         df_all['day'] = df_all['date'].dt.day
         plot_mask = (df_all['date'].dt.year == b_year) & (df_all['date'].dt.month == b_month) & (df_all['type'] == 'Expense')
@@ -344,5 +347,6 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
 
 
