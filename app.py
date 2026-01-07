@@ -243,78 +243,87 @@ with tab1:
         else:
             st.info("暂无数据")
 
-# === Tab 2: 深度报表 (增强可视化版) ===
+# === Tab 2: 深度报表 (图表锁定版) ===
 with tab2:
     if not df_all.empty:
-        st.subheader("📊 每日支出分析")
+        st.subheader("📊 每日支出")
         
-        # 1. 筛选器
-        b_c1, b_c2, b_c3 = st.columns([1, 1, 1])
+        b_c1, b_c2 = st.columns(2)
         b_year = b_c1.selectbox("年份", u_years, key="b_y")
         b_month = b_c2.selectbox("月份", range(1, 13), index=datetime.now().month-1, key="b_m")
         
-        # ⚡️ 解决痛点 1：增加对数坐标开关，解决巨大支出压扁小支出的问题
-        use_log = b_c3.toggle("对数模式 (查看小额支出)", help="当某天支出巨大导致其他天看不清时，请开启此项")
-
         df_all['day'] = df_all['date'].dt.day
         plot_mask = (df_all['date'].dt.year == b_year) & (df_all['date'].dt.month == b_month) & (df_all['type'] == 'Expense')
         df_plot = df_all[plot_mask]
         
+        # 过滤负数
         df_plot = df_plot[df_plot['amount'] > 0]
         
         if not df_plot.empty:
             daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
             last_day = calendar.monthrange(b_year, b_month)[1]
 
-            # 柱状图
+            # 柱状图 (锁死坐标轴)
             fig = px.bar(
                 daily_data, x='day', y='amount', color='category', 
                 title=f"{b_year}年{b_month}月 每日分布",
-                labels={'day':'日期', 'amount':'金额 (RM)', 'category':'类别'},
-                text_auto='.0f', 
-                template="plotly_dark",
+                labels={'day':'日期', 'amount':'金额', 'category':'类别'},
+                text_auto='.0f', template="plotly_dark",
                 log_y=use_log # ⚡️ 动态切换对数坐标
             )
-            
-            fig.update_layout(
-                xaxis=dict(tickmode='linear', tick0=1, dtick=1, range=[0.5, last_day + 0.5]),
-                # ⚡️ 移除了 fixedrange，允许用户手动鼠标缩放 (Zoom)
-                dragmode='zoom', 
-                hovermode="x unified"
+            fig.update_xaxes(
+                tickmode='linear', tick0=1, dtick=1, 
+                range=[0.5, last_day + 0.5],
+                fixedrange=True # 🔒 锁死X轴
             )
+            fig.update_yaxes(fixedrange=True) # 🔒 锁死Y轴
             
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
+            st.plotly_chart(
+                fig, 
+                use_container_width=True, 
+                config={'displayModeBar': False}
+            )
             
             st.divider()
             
-            # 甜甜圈图
-            st.subheader("🍩 支出构成")
+            # --- 🍩 甜甜圈图部分 ( Leader Lines 引线增强版) ---
+            st.subheader("支出构成")
+            
+            # 统计数据
+            pie_data = df_plot.groupby('category')['amount'].sum().reset_index()
+            
             fig_pie = px.pie(
-                df_plot, 
+                pie_data, 
                 values='amount', 
                 names='category', 
                 hole=0.5,
-                color_discrete_sequence=px.colors.qualitative.Pastel
+                # 使用比较鲜明的配色方案，方便区分
+                color_discrete_sequence=px.colors.qualitative.Bold 
             )
             
-            # ⚡️ 解决痛点 2：优化标签显示
+            # ⚡️ 核心设置：引线与标签
             fig_pie.update_traces(
-                textposition='outside', 
-                textinfo='percent+label',
-                insidetextorientation='horizontal'
+                textposition='outside',      # 强制文字在圆环外面
+                textinfo='label+percent',    # 同时显示名称和百分比
+                rotation=90,  # ⚡️ 新增：旋转 90 度，把拥挤的小切片从底部移到侧边，文字会更容易铺开
+                insidetextorientation='horizontal',
+                # 给极小的项加一点“引出”效果，防止挤在圆心附近
+                marker=dict(line=dict(color='#000000', width=1))
             )
             
             fig_pie.update_layout(
                 showlegend=True,
-                # 强制设置最小字号，防止由于切片太小导致标签消失
-                uniformtext_minsize=10, 
-                uniformtext_mode='hide',
-                # 自动调整边缘防止标签被图表框切断
-                margin=dict(t=50, b=50, l=50, r=50) 
+                # ⚡️ 关键：增加左右边距 (L/R)，给“线”留出空间
+                margin=dict(t=80, b=80, l=120, r=120), 
+                # 自动调整边距，防止标签超出画布
+                autosize=True,
+                # 统一字号，防止太小的百分比变成“蚂蚁字”
+                uniformtext_minsize=11, 
+                uniformtext_mode='show', # 强制显示，如果还是太挤则会自动调整位置
+                height=600 # 适当增加高度，让空间更充裕
             )
-            
+
             st.plotly_chart(fig_pie, use_container_width=True)
-            
         else:
             st.warning("该月无有效支出")
 
@@ -335,4 +344,5 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
 
