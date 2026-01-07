@@ -243,57 +243,78 @@ with tab1:
         else:
             st.info("暂无数据")
 
-# === Tab 2: 深度报表 (图表锁定版) ===
+# === Tab 2: 深度报表 (增强可视化版) ===
 with tab2:
     if not df_all.empty:
-        st.subheader("📊 每日支出")
+        st.subheader("📊 每日支出分析")
         
-        b_c1, b_c2 = st.columns(2)
+        # 1. 筛选器
+        b_c1, b_c2, b_c3 = st.columns([1, 1, 1])
         b_year = b_c1.selectbox("年份", u_years, key="b_y")
         b_month = b_c2.selectbox("月份", range(1, 13), index=datetime.now().month-1, key="b_m")
         
+        # ⚡️ 解决痛点 1：增加对数坐标开关，解决巨大支出压扁小支出的问题
+        use_log = b_c3.toggle("对数模式 (查看小额支出)", help="当某天支出巨大导致其他天看不清时，请开启此项")
+
         df_all['day'] = df_all['date'].dt.day
         plot_mask = (df_all['date'].dt.year == b_year) & (df_all['date'].dt.month == b_month) & (df_all['type'] == 'Expense')
         df_plot = df_all[plot_mask]
         
-        # 过滤负数
         df_plot = df_plot[df_plot['amount'] > 0]
         
         if not df_plot.empty:
             daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
             last_day = calendar.monthrange(b_year, b_month)[1]
 
-            # 柱状图 (锁死坐标轴)
+            # 柱状图
             fig = px.bar(
                 daily_data, x='day', y='amount', color='category', 
                 title=f"{b_year}年{b_month}月 每日分布",
-                labels={'day':'日期', 'amount':'金额', 'category':'类别'},
-                text_auto='.0f', template="plotly_dark"
+                labels={'day':'日期', 'amount':'金额 (RM)', 'category':'类别'},
+                text_auto='.0f', 
+                template="plotly_dark",
+                log_y=use_log # ⚡️ 动态切换对数坐标
             )
-            fig.update_xaxes(
-                tickmode='linear', tick0=1, dtick=1, 
-                range=[0.5, last_day + 0.5],
-                fixedrange=True # 🔒 锁死X轴
-            )
-            fig.update_yaxes(fixedrange=True) # 🔒 锁死Y轴
             
-            st.plotly_chart(
-                fig, 
-                use_container_width=True, 
-                config={'displayModeBar': False}
+            fig.update_layout(
+                xaxis=dict(tickmode='linear', tick0=1, dtick=1, range=[0.5, last_day + 0.5]),
+                # ⚡️ 移除了 fixedrange，允许用户手动鼠标缩放 (Zoom)
+                dragmode='zoom', 
+                hovermode="x unified"
             )
+            
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
             
             st.divider()
             
-            # 甜甜圈图 (百分比外显)
-            fig_pie = px.pie(df_plot, values='amount', names='category', hole=0.5, title="支出构成")
-            fig_pie.update_traces(textposition='outside', textinfo='percent+label')
-            
-            st.plotly_chart(
-                fig_pie, 
-                use_container_width=True, 
-                config={'displayModeBar': False}
+            # 甜甜圈图
+            st.subheader("🍩 支出构成")
+            fig_pie = px.pie(
+                df_plot, 
+                values='amount', 
+                names='category', 
+                hole=0.5,
+                color_discrete_sequence=px.colors.qualitative.Pastel
             )
+            
+            # ⚡️ 解决痛点 2：优化标签显示
+            fig_pie.update_traces(
+                textposition='outside', 
+                textinfo='percent+label',
+                insidetextorientation='horizontal'
+            )
+            
+            fig_pie.update_layout(
+                showlegend=True,
+                # 强制设置最小字号，防止由于切片太小导致标签消失
+                uniformtext_minsize=10, 
+                uniformtext_mode='hide',
+                # 自动调整边缘防止标签被图表框切断
+                margin=dict(t=50, b=50, l=50, r=50) 
+            )
+            
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
         else:
             st.warning("该月无有效支出")
 
@@ -314,3 +335,4 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
