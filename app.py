@@ -177,8 +177,8 @@ with tab1:
             # 💡 就是这一行：增加了 clear_on_submit=True 参数
             with st.form("manual_form", clear_on_submit=True):
                 d_in = st.date_input("日期", date.today())
-                it_in = st.text_input("项目名称")
                 cat_in = st.selectbox("类别", get_categories())
+                it_in = st.text_input("项目名称")
                 t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
                 # 默认留空
                 amt_in = st.number_input("金额 (RM)", min_value=0.0, step=0.01, value=None, placeholder="输入金额...")
@@ -350,6 +350,7 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
 
 
 
