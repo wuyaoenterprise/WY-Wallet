@@ -26,7 +26,7 @@ except Exception as e:
 # --- 3. 数据库操作 ---
 def load_data():
     try:
-        res = supabase.table("transactions").select("*").order("date", desc=True).execute()
+        res = supabase.table("transactions").select("*").order("date", desc=True).order("id", desc=True).execute()
         df = pd.DataFrame(res.data)
         if not df.empty:
             df['date'] = pd.to_datetime(df['date']).dt.date
@@ -181,10 +181,13 @@ with tab1:
                 # 默认留空
                 amt_in = st.number_input("金额 (RM)", min_value=0.0, step=0.01, value=None, placeholder="输入金额...")
                 
-                if st.form_submit_button("立即存入"):
-                    if amt_in is not None:
-                        if save_to_cloud([{"date":d_in, "item":it_in, "category":cat_in, "type":t_in, "amount":amt_in}]):
-                            st.rerun()
+               if st.form_submit_button("立即存入"):
+                    if amt_in > 0:
+                        success = save_to_cloud([{"date":d_in, "item":it_in, "category":cat_in, "type":t_in, "amount":amt_in}])
+                        if success:
+                            # ⚡️ 改进点 5：保存后归零复位
+                            st.toast("记录成功！")
+                            st.rerun() # Rerun 会重置表单内容
                     else:
                         st.warning("⚠️ 请输入金额")
 
@@ -223,11 +226,11 @@ with tab1:
                     # 1. 日期 (独立一列，不再混淆)
                     c1.write(row['date'].strftime('%Y-%m-%d'))
                     
-                    # 2. 项目
-                    c2.write(row['item'])
-                    
-                    # 3. 类别
+                    # 2. 类别
                     c3.caption(row['category'])
+                    
+                    # 3. 项目
+                    c2.write(row['item'])
                     
                     # 4. 金额
                     color = "red" if row['type'] == "Expense" else "green"
@@ -348,7 +351,6 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
-
 
 
 
