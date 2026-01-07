@@ -171,43 +171,24 @@ with tab1:
                     del st.session_state['pending_data']
                     st.rerun()
 
-        ## 手动记账
-with st.expander("➕ 手动记账", expanded=True):
-    # ⚡️ 1. 初始化重置触发器
-    if 'reset_trigger' not in st.session_state:
-        st.session_state.reset_trigger = 0
-
-    # 💡 使用 clear_on_submit=True 配合 key 实现彻底重置
-    with st.form("manual_form", clear_on_submit=True):
-        d_in = st.date_input("日期", date.today())
-        
-        # ⚡️ 2. 为项目名称绑定动态 key
-        it_in = st.text_input("项目名称", key=f"it_name_{st.session_state.reset_trigger}")
-        
-        cat_in = st.selectbox("类别", get_categories())
-        t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
-        
-        # ⚡️ 3. 为金额绑定动态 key，并将默认值设为 0.0
-        amt_in = st.number_input(
-            "金额 (RM)", 
-            min_value=0.0, 
-            step=0.01, 
-            value=0.0, 
-            key=f"amt_val_{st.session_state.reset_trigger}"
-        )
-        
-        if st.form_submit_button("立即存入"):
-            # 这里的逻辑判断：金额必须大于 0 且项目名称不为空
-            if amt_in > 0 and it_in.strip() != "":
-                if save_to_cloud([{"date":d_in, "item":it_in, "category":cat_in, "type":t_in, "amount":amt_in}]):
-                    # ⚡️ 4. 保存成功，递增触发器
-                    st.session_state.reset_trigger += 1
-                    st.toast("✅ 记录成功！项目已重置。")
-                    st.rerun()
-            elif it_in.strip() == "":
-                st.warning("⚠️ 请输入项目名称")
-            else:
-                st.warning("⚠️ 请输入金额")
+       # 手动记账
+       # ⚡️ 核心修改：确保缩进在 col_left 内部，并添加 clear_on_submit=True
+        with st.expander("➕ 手动记账", expanded=True):
+            # 💡 就是这一行：增加了 clear_on_submit=True 参数
+            with st.form("manual_form", clear_on_submit=True):
+                d_in = st.date_input("日期", date.today())
+                it_in = st.text_input("项目名称")
+                cat_in = st.selectbox("类别", get_categories())
+                t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
+                # 默认留空
+                amt_in = st.number_input("金额 (RM)", min_value=0.0, step=0.01, value=None, placeholder="输入金额...")
+                
+                if st.form_submit_button("立即存入"):
+                    if amt_in is not None:
+                        if save_to_cloud([{"date":d_in, "item":it_in, "category":cat_in, "type":t_in, "amount":amt_in}]):
+                            st.rerun()
+                    else:
+                        st.warning("⚠️ 请输入金额")
                 
     # --- 右侧：历史记录 (日期清晰版) ---
     with col_right:
@@ -230,8 +211,8 @@ with st.expander("➕ 手动记账", expanded=True):
                 # 表头：明确显示日期
                 h1, h2, h3, h4, h5 = st.columns([1.2, 2, 1.2, 1, 0.6])
                 h1.markdown("**📅 日期**")
-                h2.markdown("**📝 项目**")
-                h3.markdown("**🏷️ 类别**")
+                h2.markdown("**📝 类别**")
+                h3.markdown("**🏷️ 项目**")
                 h4.markdown("**💰 金额**")
                 h5.markdown("**操作**")
                 
@@ -369,6 +350,7 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
 
 
 
