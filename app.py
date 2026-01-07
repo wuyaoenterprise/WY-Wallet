@@ -277,10 +277,17 @@ with tab2:
                 log_y=use_log  # 现在 use_log 已经定义好了，不会报错了
             )
             
-            fig.update_xaxes(
+fig.update_xaxes(
                 tickmode='linear', tick0=1, dtick=1, 
                 range=[0.5, last_day + 0.5],
-                fixedrange=True # ⚡️ 要求：禁止放大缩放，手机更友好
+                fixedrange=True # 🔒 锁死X轴
+            )
+            fig.update_yaxes(fixedrange=True) # 🔒 锁死Y轴
+            
+            st.plotly_chart(
+                fig, 
+                use_container_width=True, 
+                config={'displayModeBar': False}
             )
             
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
@@ -337,6 +344,7 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
 
 
 
