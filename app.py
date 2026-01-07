@@ -173,23 +173,34 @@ with tab1:
 
         # 手动记账
         with st.expander("➕ 手动记账", expanded=True):
-            with st.form("manual_form"):
+            # 💡 确保 reset_trigger 在 session_state 中
+            if 'reset_trigger' not in st.session_state: 
+                st.session_state.reset_trigger = 0
+
+            with st.form("manual_form", clear_on_submit=True):
                 d_in = st.date_input("日期", date.today())
-                it_in = st.text_input("项目名称")
+                
+                # ⚡️ 项目在上，类别在下
+                it_in = st.text_input("项目名称", key=f"it_{st.session_state.reset_trigger}")
                 cat_in = st.selectbox("类别", get_categories())
                 t_in = st.radio("类型", ["Expense", "Income"], horizontal=True)
-                # 默认留空
-                amt_in = st.number_input("金额 (RM)", min_value=0.0, step=0.01, value=None, placeholder="输入金额...")
                 
-               if st.form_submit_button("立即存入"):
+                # 金额输入
+                amt_in = st.number_input("金额 (RM)", min_value=0.0, step=0.01, 
+                                        value=calc_val if calc_val > 0 else 0.0,
+                                        key=f"amt_{st.session_state.reset_trigger}")
+                
+                # ✅ 修复缩进：这一行必须与上面的 it_in/cat_in 对齐
+                if st.form_submit_button("立即存入"):
                     if amt_in > 0:
-                        success = save_to_cloud([{"date":d_in, "item":it_in, "category":cat_in, "type":t_in, "amount":amt_in}])
-                        if success:
-                            # ⚡️ 改进点 5：保存后归零复位
-                            st.toast("记录成功！")
-                            st.rerun() # Rerun 会重置表单内容
+                        res = save_to_cloud([{"date":d_in, "item":it_in, "category":cat_in, "type":t_in, "amount":amt_in}])
+                        if res:
+                            # ⚡️ 保存成功后，通过改变 key 来强制清空输入框
+                            st.session_state.reset_trigger += 1
+                            st.toast("✅ 记录成功！")
+                            st.rerun()
                     else:
-                        st.warning("⚠️ 请输入金额")
+                        st.warning("⚠️ 请输入有效金额")
 
     # --- 右侧：历史记录 (日期清晰版) ---
     with col_right:
@@ -351,6 +362,7 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
 
 
 
