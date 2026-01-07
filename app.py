@@ -267,32 +267,36 @@ with tab2:
             daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
             last_day = calendar.monthrange(b_year, b_month)[1]
 
-            # --- 柱状图 ---
+           # 柱状图 (锁死坐标轴 + 动态对数模式)
             fig = px.bar(
-                daily_data, x='day', y='amount', color='category', 
+                daily_data, 
+                x='day', 
+                y='amount', 
+                color='category', 
                 title=f"{b_year}年{b_month}月 每日分布",
                 labels={'day':'日期', 'amount':'金额 (RM)', 'category':'类别'},
                 text_auto='.0f', 
                 template="plotly_dark",
-                log_y=use_log  # 现在 use_log 已经定义好了，不会报错了
+                log_y=use_log  # ⚡️ 核心：保留你要求的动态对数开关功能
             )
             
-fig.update_xaxes(
-                tickmode='linear', tick0=1, dtick=1, 
+            fig.update_xaxes(
+                tickmode='linear', 
+                tick0=1, 
+                dtick=1, 
                 range=[0.5, last_day + 0.5],
-                fixedrange=True # 🔒 锁死X轴
+                fixedrange=True  # 🔒 锁死X轴，防止移动端误触导致画面放大缩小
             )
-            fig.update_yaxes(fixedrange=True) # 🔒 锁死Y轴
+            
+            fig.update_yaxes(
+                fixedrange=True  # 🔒 锁死Y轴，防止移动端误触
+            )
             
             st.plotly_chart(
                 fig, 
                 use_container_width=True, 
-                config={'displayModeBar': False}
+                config={'displayModeBar': False} # 隐藏工具栏，让手机端界面更清爽
             )
-            
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
-            
-            st.divider()
             
             # --- 甜甜圈图部分  ---
             st.subheader("支出构成")
@@ -344,6 +348,7 @@ with tab3:
         if st.button("确认删除"):
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.rerun()
+
 
 
 
