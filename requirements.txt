@@ -3,4 +3,6 @@ pandas
 plotly
 google-generativeai
 pillow
+
 supabase
+XlsxWriter
