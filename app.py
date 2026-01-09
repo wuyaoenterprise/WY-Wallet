@@ -247,12 +247,39 @@ with tab2:
     if not df_all.empty:
         @st.fragment
         def render_tab2_charts(df_input):
+            # --- 顶部：选择器 ---
             st.subheader("📊 每日支出")
             b_c1, b_c2, b_c3 = st.columns([1, 1, 1])
             u_y = sorted(pd.to_datetime(df_input['date']).dt.year.unique(), reverse=True)
             b_year = b_c1.selectbox("年份", u_y, key="b_y_frag")
             b_month = b_c2.selectbox("月份", range(1, 13), index=datetime.now().month-1, key="b_m_frag")
             use_log = b_c3.toggle("对数模式 (查看微小支出)", value=False)
+
+            # ==========================================
+            # 👇👇👇 [新增代码开始] 显示当月收支概览 👇👇👇
+            # ==========================================
+            
+            # 1. 筛选当前选中年份和月份的数据
+            mask_summary = (pd.to_datetime(df_input['date']).dt.year == b_year) & \
+                           (pd.to_datetime(df_input['date']).dt.month == b_month)
+            df_summary = df_input[mask_summary]
+
+            # 2. 计算总和
+            total_income = df_summary[df_summary['type'] == 'Income']['amount'].sum()
+            total_expense = df_summary[df_summary['type'] == 'Expense']['amount'].sum()
+            balance = total_income - total_expense
+
+            # 3. 使用 st.metric 展示 (仿照截图样式)
+            st.markdown("###") # 增加一点垂直间距
+            m1, m2, m3 = st.columns(3)
+            m1.metric("总收入", f"{total_income:,.2f}")
+            m2.metric("总支出", f"{total_expense:,.2f}")
+            m3.metric("结余", f"{balance:,.2f}")
+            st.markdown("---") # 分割线
+            
+            # ==========================================
+            # 👆👆👆 [新增代码结束] 👆👆👆
+            # ==========================================
 
             df_p = df_input.copy()
             df_p['date'] = pd.to_datetime(df_p['date'])
@@ -284,7 +311,7 @@ with tab2:
                 st.warning("该月无有效支出")
 
         render_tab2_charts(df_all)
-
+        
 # === Tab 3: 设置 ===
 with tab3:
     st.header("⚙️ 类别管理")
@@ -303,6 +330,7 @@ with tab3:
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.cache_data.clear()
             st.rerun()
+
 
 
 
