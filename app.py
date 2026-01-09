@@ -261,8 +261,7 @@ with tab2:
             df_plot = df_p[plot_mask]
             
             if not df_plot.empty:
-                daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
-                last_day = calendar.monthrange(b_year, b_month)[1]
+                
                 # 计算总额
             income = df_month[df_month['type'] == 'Income']['amount'].sum()
             expense = df_month[df_month['type'] == 'Expense']['amount'].sum()
@@ -276,6 +275,8 @@ with tab2:
             
             st.divider()
             
+                daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
+                last_day = calendar.monthrange(b_year, b_month)[1]
                 fig = px.bar(
                     daily_data, x='day', y='amount', color='category', 
                     title=f"{b_year}年{b_month}月 每日分布",
@@ -316,5 +317,6 @@ with tab3:
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.cache_data.clear()
             st.rerun()
+
 
 
