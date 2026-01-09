@@ -101,7 +101,7 @@ def save_to_cloud(data_input):
 # --- 4. AI 翻译逻辑 ---
 def ai_analyze_receipt(image):
     current_cats = get_categories()
-    model_name = 'gemini-2.5-flash' 
+    model_name = 'gemini-3-flash-preview' 
     try:
         model = genai.GenerativeModel(model_name)
         prompt = f"""
@@ -489,6 +489,7 @@ with tab4:
         )
     else:
         st.info("暂无数据可导出")
+
 
 
 
