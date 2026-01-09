@@ -167,7 +167,7 @@ all_categories = get_categories()
 # ⚡️ 获取排序后的类别列表
 sorted_cats = get_sorted_categories(df_all, all_categories)
 
-tab1, tab2, tab3 = st.tabs(["📝 记账与历史", "📊 深度报表", "⚙️ 设置"])
+tab1, tab2, tab3, tab4 = st.tabs(["📝 记账与历史", "📊 深度报表",  "🤖 AI 洞察" ， "⚙️ 设置"])
 
 # === Tab 1: 记账与历史 ===
 with tab1:
@@ -376,53 +376,9 @@ with tab2:
                 st.warning("该月无有效支出")
 
         render_tab2_charts(df_all)
-        
-# === Tab 3: 添加类别/数据导出 ===
+
+# === ⚡️ Tab 3: AI 宏观分析 (新功能) ===
 with tab3:
-    st.header("⚙️ 类别管理")
-    c1, c2 = st.columns(2)
-    with c1:
-        new_cat = st.text_input("✨ 新类别")
-        if st.button("添加"):
-            if new_cat and new_cat not in all_categories:
-                supabase.table("categories").insert({"name": new_cat}).execute()
-                st.cache_data.clear()
-                st.rerun()
-    with c2:
-        # 删除时建议按字母排序，方便找，或者也按频率排序
-        del_cat = st.selectbox("🗑️ 删除类别", sorted_cats)
-        if st.button("确认删除"):
-            supabase.table("categories").delete().eq("name", del_cat).execute()
-            st.cache_data.clear()
-            st.rerun()
-
-# ⚡️ 新增：Excel 导出功能
-    st.markdown("---")
-    st.header("📂 数据备份")
-    st.write("将数据库中的所有账目导出为 Excel 文件。")
-    
-    if not df_all.empty:
-        # 使用 io.BytesIO 在内存中生成 Excel 文件
-        output = io.BytesIO()
-        # 注意：这里使用 to_excel，pandas 默认通常使用 openpyxl
-        # 如果报错缺少 openpyxl，需要在 requirements.txt 中添加 openpyxl
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_all.to_excel(writer, index=False, sheet_name='Transactions')
-        
-        excel_data = output.getvalue()
-        
-        st.download_button(
-            label="📥 下载 Excel 备份",
-            data=excel_data,
-            file_name=f"SmartAssetPro_Backup_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
-    else:
-        st.info("暂无数据可导出")
-
-# === ⚡️ Tab 4: AI 宏观分析 (新功能) ===
-with tab4:
     st.header("🤖 AI 宏观消费洞察")
     st.info("这里使用 AI 自动识别你的每一笔支出，并将其归类为更通用的「宏观大类」（如：旅游、餐饮、投资），帮助你跳出琐碎的细节，看清大方向。")
     
@@ -490,6 +446,49 @@ with tab4:
                 with st.expander("🔍 查看 AI 是如何归类的"):
                     st.dataframe(df_res[['date', 'item', 'amount', 'Macro Category']].sort_values('date', ascending=False))
 
+# === Tab 4: 添加类别/数据导出 ===
+with tab4:
+    st.header("⚙️ 类别管理")
+    c1, c2 = st.columns(2)
+    with c1:
+        new_cat = st.text_input("✨ 新类别")
+        if st.button("添加"):
+            if new_cat and new_cat not in all_categories:
+                supabase.table("categories").insert({"name": new_cat}).execute()
+                st.cache_data.clear()
+                st.rerun()
+    with c2:
+        # 删除时建议按字母排序，方便找，或者也按频率排序
+        del_cat = st.selectbox("🗑️ 删除类别", sorted_cats)
+        if st.button("确认删除"):
+            supabase.table("categories").delete().eq("name", del_cat).execute()
+            st.cache_data.clear()
+            st.rerun()
+
+# ⚡️ 新增：Excel 导出功能
+    st.markdown("---")
+    st.header("📂 数据备份")
+    st.write("将数据库中的所有账目导出为 Excel 文件。")
+    
+    if not df_all.empty:
+        # 使用 io.BytesIO 在内存中生成 Excel 文件
+        output = io.BytesIO()
+        # 注意：这里使用 to_excel，pandas 默认通常使用 openpyxl
+        # 如果报错缺少 openpyxl，需要在 requirements.txt 中添加 openpyxl
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_all.to_excel(writer, index=False, sheet_name='Transactions')
+        
+        excel_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 下载 Excel 备份",
+            data=excel_data,
+            file_name=f"SmartAssetPro_Backup_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
+    else:
+        st.info("暂无数据可导出")
 
 
 
