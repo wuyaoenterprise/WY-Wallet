@@ -108,8 +108,9 @@ def ai_analyze_receipt(image):
         要求：
         1. 必须将 item(项目名称) 翻译成简练的中文。
         2. 输出纯粹的 JSON 数组格式，不要包含 Markdown 标记。
-        3. 格式示例：[{{"date": "YYYY-MM-DD", "item": "中文名称", "category": "类别", "amount": 10.5, "type": "Expense"}}]
-        4. 类别(category)必须从以下列表中选择: {", ".join(current_cats)}
+        3. 如果有折扣直接算入折扣项目，无需分出显示。
+        4. 格式示例：[{{"date": "YYYY-MM-DD", "item": "中文名称", "category": "类别", "amount": 10.5, "type": "Expense"}}]
+        5. 类别(category)必须从以下列表中选择: {", ".join(current_cats)}
         """
         with st.spinner(f'🤖 AI 正在识别...'):
             response = model.generate_content([prompt, image])
@@ -298,7 +299,7 @@ with tab2:
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
                 
                 st.divider()
-                st.subheader("支出构成")
+                st.subheader("支出分类")
                 
                 # ⚡️ [新增功能] 左右布局：左边圈图，右边排行条形图
                 pie_data = df_plot.groupby('category')['amount'].sum().reset_index()
@@ -344,7 +345,7 @@ with tab2:
 
         render_tab2_charts(df_all)
         
-# === Tab 3: 设置 ===
+# === Tab 3: 添加类别/数据导出 ===
 with tab3:
     st.header("⚙️ 类别管理")
     c1, c2 = st.columns(2)
@@ -363,6 +364,30 @@ with tab3:
             st.cache_data.clear()
             st.rerun()
 
+# ⚡️ 新增：Excel 导出功能
+    st.markdown("---")
+    st.header("📂 数据备份")
+    st.write("将数据库中的所有账目导出为 Excel 文件。")
+    
+    if not df_all.empty:
+        # 使用 io.BytesIO 在内存中生成 Excel 文件
+        output = io.BytesIO()
+        # 注意：这里使用 to_excel，pandas 默认通常使用 openpyxl
+        # 如果报错缺少 openpyxl，需要在 requirements.txt 中添加 openpyxl
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_all.to_excel(writer, index=False, sheet_name='Transactions')
+        
+        excel_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 下载 Excel 备份",
+            data=excel_data,
+            file_name=f"SmartAssetPro_Backup_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
+    else:
+        st.info("暂无数据可导出")
 
 
 
