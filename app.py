@@ -169,9 +169,16 @@ with tab1:
                     "type": st.column_config.SelectboxColumn("类型", options=["Expense", "Income"])
                 }
             )
-            if st.button("✅ 确认同步到云端"):
-                if save_to_cloud(edited):
-                    st.success("同步成功！")
+          # ⚡️ [新增功能] 确认与放弃按钮并排显示
+            col_b1, col_b2 = st.columns([1, 1])
+            with col_b1:
+                if st.button("✅ 确认同步", type="primary", use_container_width=True):
+                    if save_to_cloud(edited):
+                        st.success("同步成功！")
+                        del st.session_state['pending_data']
+                        st.rerun()
+            with col_b2:
+                if st.button("🗑️ 放弃本次识别", use_container_width=True):
                     del st.session_state['pending_data']
                     st.rerun()
 
@@ -255,32 +262,22 @@ with tab2:
             b_month = b_c2.selectbox("月份", range(1, 13), index=datetime.now().month-1, key="b_m_frag")
             use_log = b_c3.toggle("对数模式 (查看微小支出)", value=False)
 
-            # ==========================================
-            # 👇👇👇 [新增代码开始] 显示当月收支概览 👇👇👇
-            # ==========================================
-            
-            # 1. 筛选当前选中年份和月份的数据
+            # 显示当月收支概览
             mask_summary = (pd.to_datetime(df_input['date']).dt.year == b_year) & \
                            (pd.to_datetime(df_input['date']).dt.month == b_month)
             df_summary = df_input[mask_summary]
 
-            # 2. 计算总和
             total_income = df_summary[df_summary['type'] == 'Income']['amount'].sum()
             total_expense = df_summary[df_summary['type'] == 'Expense']['amount'].sum()
             balance = total_income - total_expense
 
-            # 3. 使用 st.metric 展示 (仿照截图样式)
-            st.markdown("###") # 增加一点垂直间距
+            st.markdown("###") 
             m1, m2, m3 = st.columns(3)
             m1.metric("总收入", f"{total_income:,.2f}")
             m2.metric("总支出", f"{total_expense:,.2f}")
             m3.metric("结余", f"{balance:,.2f}")
-            st.markdown("---") # 分割线
+            st.markdown("---") 
             
-            # ==========================================
-            # 👆👆👆 [新增代码结束] 👆👆👆
-            # ==========================================
-
             df_p = df_input.copy()
             df_p['date'] = pd.to_datetime(df_p['date'])
             df_p['day'] = df_p['date'].dt.day
@@ -302,11 +299,46 @@ with tab2:
                 
                 st.divider()
                 st.subheader("支出构成")
+                
+                # ⚡️ [新增功能] 左右布局：左边圈图，右边排行条形图
                 pie_data = df_plot.groupby('category')['amount'].sum().reset_index()
-                fig_pie = px.pie(pie_data, values='amount', names='category', hole=0.5, color_discrete_sequence=px.colors.qualitative.Bold)
-                fig_pie.update_traces(textposition='outside', textinfo='label+percent', rotation=90, marker=dict(line=dict(color='#000000', width=1)))
-                fig_pie.update_layout(margin=dict(t=80, b=80, l=120, r=120), autosize=True, uniformtext_minsize=11, uniformtext_mode='show', height=600)
-                st.plotly_chart(fig_pie, use_container_width=True)
+                
+                # 分成两列
+                col_chart, col_list = st.columns([1.6, 1], gap="medium")
+                
+                with col_chart:
+                    fig_pie = px.pie(pie_data, values='amount', names='category', hole=0.5, color_discrete_sequence=px.colors.qualitative.Bold)
+                    fig_pie.update_traces(textposition='outside', textinfo='label+percent', rotation=90, marker=dict(line=dict(color='#000000', width=1)))
+                    # 调整边距以适应布局
+                    fig_pie.update_layout(margin=dict(t=40, b=40, l=40, r=40), height=400, showlegend=False) 
+                    st.plotly_chart(fig_pie, use_container_width=True)
+
+                with col_list:
+                    # 准备数据：按金额从小到大排序（Plotly横向图是从下往上画，所以最大的在最上面）
+                    bar_data = pie_data.sort_values('amount', ascending=True)
+                    
+                    fig_bar = px.bar(
+                        bar_data, 
+                        x='amount', 
+                        y='category', 
+                        orientation='h', 
+                        text_auto='.2f',
+                        color='category', # 保持颜色一致
+                        color_discrete_sequence=px.colors.qualitative.Bold
+                    )
+                    
+                    # 优化样式：去掉多余的坐标轴，让它看起来像一个列表
+                    fig_bar.update_layout(
+                        title="分类排行 (RM)",
+                        xaxis_visible=False, # 隐藏X轴
+                        yaxis_title=None,    # 隐藏Y轴标题
+                        showlegend=False,    # 隐藏图例（因为左边有了或者直接看字）
+                        margin=dict(l=0, r=0, t=40, b=0),
+                        height=400,
+                        template="plotly_dark"
+                    )
+                    st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
+
             else:
                 st.warning("该月无有效支出")
 
@@ -330,6 +362,7 @@ with tab3:
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.cache_data.clear()
             st.rerun()
+
 
 
 
