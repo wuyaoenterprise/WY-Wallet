@@ -7,6 +7,7 @@ from PIL import Image
 from supabase import create_client, Client
 import calendar
 import json 
+import io
 
 # --- 1. 页面配置 ---
 st.set_page_config(page_title="Smart Asset Pro", page_icon="💳", layout="wide")
@@ -127,7 +128,38 @@ def ai_analyze_receipt(image):
                 return None, f"解析失败: {raw_text}"
     except Exception as e:
         return None, f"请求出错: {str(e)}"
-
+        
+# ⚡️ Tab 4 的核心逻辑：AI 宏观归类
+@st.cache_data(show_spinner=False)
+def ai_categorize_macro(unique_items_json):
+    """
+    将用户的具体消费项目归类为宏观大类。
+    """
+    model_name = 'gemini-2.5-flash'
+    try:
+        model = genai.GenerativeModel(model_name)
+        prompt = f"""
+        你是一个高级数据分析师。我给你一列用户的消费项目和当前的小分类。
+        请根据常识，将它们归类为以下【宏观大类】(Macro Category) 之一：
+        [餐饮美食, 交通出行, 居家生活, 购物消费, 休闲娱乐, 医疗健康, 教育学习, 投资理财, 旅游度假, 其他]
+        
+        输入数据: {unique_items_json}
+        
+        要求：
+        1. 必须返回纯 JSON 格式，不要 Markdown。
+        2. 格式为 Key-Value 对对象： {{"项目名": "宏观大类", "项目名2": "宏观大类"}}
+        3. 例如：{{"KFC": "餐饮美食", "机票": "旅游度假", "Grab": "交通出行"}}
+        """
+        response = model.generate_content(prompt)
+        raw_text = response.text.strip()
+        # 清理
+        if raw_text.startswith("```json"): raw_text = raw_text[7:]
+        if raw_text.startswith("```"): raw_text = raw_text[3:]
+        if raw_text.endswith("```"): raw_text = raw_text[:-3]
+        return json.loads(raw_text)
+    except Exception as e:
+        return {}
+        
 # --- 5. 主程序 UI ---
 # 预先获取数据以供全局使用
 df_all = load_data()
@@ -389,6 +421,74 @@ with tab3:
     else:
         st.info("暂无数据可导出")
 
+# === ⚡️ Tab 4: AI 宏观分析 (新功能) ===
+with tab4:
+    st.header("🤖 AI 宏观消费洞察")
+    st.info("这里使用 AI 自动识别你的每一笔支出，并将其归类为更通用的「宏观大类」（如：旅游、餐饮、投资），帮助你跳出琐碎的细节，看清大方向。")
+    
+    if df_all.empty:
+        st.warning("暂无数据可分析")
+    else:
+        # 1. 准备数据
+        df_analysis = df_all[df_all['type'] == 'Expense'].copy()
+        
+        # 2. 筛选时间
+        col_t1, col_t2 = st.columns(2)
+        target_year = col_t1.selectbox("选择年份", sorted(df_analysis['date'].apply(lambda x: x.year).unique(), reverse=True), key="ai_year")
+        
+        # 3. 提取当年的唯一项目名
+        df_target = df_analysis[df_analysis['date'].apply(lambda x: x.year) == target_year]
+        if df_target.empty:
+            st.warning(f"{target_year} 年无支出数据")
+        else:
+            unique_items = df_target['item'].unique().tolist()
+            
+            if st.button("🧠 开始 AI 智能归类分析", type="primary"):
+                with st.spinner("AI 正在思考并归类你的所有账单... (可能需要十几秒)"):
+                    # 将 item 列表转为 JSON 字符串发送给 AI
+                    mapping_dict = ai_categorize_macro(json.dumps(unique_items, ensure_ascii=False))
+                    
+                    if mapping_dict:
+                        # 4. 将 AI 的归类映射回 DataFrame
+                        df_target['Macro Category'] = df_target['item'].map(mapping_dict).fillna("其他")
+                        
+                        # 5. 保存结果到 session_state 避免刷新丢失
+                        st.session_state['ai_macro_result'] = df_target
+                        st.success("分析完成！")
+                    else:
+                        st.error("AI 分析失败，请重试")
+
+            # 6. 展示结果
+            if 'ai_macro_result' in st.session_state:
+                df_res = st.session_state['ai_macro_result']
+                
+                # 统计大类金额
+                macro_stats = df_res.groupby('Macro Category')['amount'].sum().reset_index().sort_values('amount', ascending=False)
+                
+                st.divider()
+                st.subheader(f"📈 {target_year} 宏观消费分布")
+                
+                c_chart, c_data = st.columns([1.5, 1])
+                
+                with c_chart:
+                    fig = px.pie(macro_stats, values='amount', names='Macro Category', 
+                                 title="AI 智能大类占比",
+                                 hole=0.4, 
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig.update_traces(textposition='outside', textinfo='label+percent')
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                with c_data:
+                    st.write("📋 **详细归类清单**")
+                    st.dataframe(
+                        macro_stats.style.format({"amount": "{:.2f}"}), 
+                        use_container_width=True,
+                        column_config={"Macro Category": "宏观大类", "amount": "总金额 (RM)"}
+                    )
+                
+                # 展示具体的映射情况，让用户知道 AI 把什么归类成了什么
+                with st.expander("🔍 查看 AI 是如何归类的"):
+                    st.dataframe(df_res[['date', 'item', 'amount', 'Macro Category']].sort_values('date', ascending=False))
 
 
 
