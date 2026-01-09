@@ -167,7 +167,7 @@ all_categories = get_categories()
 # ⚡️ 获取排序后的类别列表
 sorted_cats = get_sorted_categories(df_all, all_categories)
 
-tab1, tab2, tab3, tab4 = st.tabs(["📝 记账与历史", "📊 深度报表",  "🤖 AI 洞察" ， "⚙️ 设置"])
+tab1, tab2, tab3, tab4 = st.tabs(["📝 记账与历史", "📊 深度报表",  "🤖 AI 洞察" , "⚙️ 设置"])
 
 # === Tab 1: 记账与历史 ===
 with tab1:
@@ -489,6 +489,7 @@ with tab4:
         )
     else:
         st.info("暂无数据可导出")
+
 
 
 
