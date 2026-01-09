@@ -315,7 +315,7 @@ with tab2:
 
                 with col_list:
                     # 准备数据：按金额从小到大排序（Plotly横向图是从下往上画，所以最大的在最上面）
-                    bar_data = pie_data.sort_values('amount', ascending=True)
+                    bar_data = pie_data.sort_values('amount', ascending=False)
                     
                     fig_bar = px.bar(
                         bar_data, 
@@ -362,6 +362,7 @@ with tab3:
             supabase.table("categories").delete().eq("name", del_cat).execute()
             st.cache_data.clear()
             st.rerun()
+
 
 
 
