@@ -285,7 +285,7 @@ with tab1:
 # === Tab 2: 深度报表 (0延迟版) ===
 with tab2:
     if not df_all.empty:
-  @st.fragment
+        @st.fragment
         def render_tab2_charts(df_input):
             # --- 顶部：选择器 ---
             st.subheader("📊 每日支出")
@@ -293,7 +293,7 @@ with tab2:
             u_y = sorted(pd.to_datetime(df_input['date']).dt.year.unique(), reverse=True)
             b_year = b_c1.selectbox("年份", u_y, key="b_y_frag")
             b_month = b_c2.selectbox("月份", range(1, 13), index=datetime.now().month-1, key="b_m_frag")
-            use_log = b_c3.toggle("对数模式 (查看微小支出)", value=False)
+            use_log = b_c3.toggle("对数模式", value=False)
 
             # 显示当月收支概览
             mask_summary = (pd.to_datetime(df_input['date']).dt.year == b_year) & \
@@ -325,7 +325,7 @@ with tab2:
                 daily_sums = df_plot.groupby('day')['amount'].sum().to_dict()
                 cal_matrix = calendar.monthcalendar(b_year, b_month)
                 
-                # 简单的 CSS 样式，让格子在手机上看起来像卡片
+                # 简单的 CSS 样式
                 st.markdown("""
                 <style>
                 .cal-day {
@@ -436,7 +436,10 @@ with tab2:
             else:
                 st.warning("该月无有效支出")
 
+        # 调用函数
         render_tab2_charts(df_all)
+    else:
+        st.info("暂无数据")
 
 # === ⚡️ Tab 3: AI 宏观分析 (新功能) ===
 with tab3:
@@ -550,6 +553,7 @@ with tab4:
         )
     else:
         st.info("暂无数据可导出")
+
 
 
 
