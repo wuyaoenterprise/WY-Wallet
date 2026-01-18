@@ -285,7 +285,7 @@ with tab1:
 # === Tab 2: 深度报表 (0延迟版) ===
 with tab2:
     if not df_all.empty:
-        @st.fragment
+  @st.fragment
         def render_tab2_charts(df_input):
             # --- 顶部：选择器 ---
             st.subheader("📊 每日支出")
@@ -318,11 +318,71 @@ with tab2:
             df_plot = df_p[plot_mask]
             
             if not df_plot.empty:
+                # === 📅 新增功能：可视化日历视图 ===
+                st.subheader(f"{b_month}月 开销日历")
+                
+                # 准备日历数据
+                daily_sums = df_plot.groupby('day')['amount'].sum().to_dict()
+                cal_matrix = calendar.monthcalendar(b_year, b_month)
+                
+                # 简单的 CSS 样式，让格子在手机上看起来像卡片
+                st.markdown("""
+                <style>
+                .cal-day {
+                    background-color: #262730;
+                    border-radius: 5px;
+                    padding: 4px;
+                    text-align: center;
+                    margin: 2px;
+                    height: 50px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                }
+                .cal-num { font-size: 12px; color: #888; }
+                .cal-amt { font-size: 14px; font-weight: bold; color: #ff4b4b; }
+                </style>
+                """, unsafe_allow_html=True)
+
+                # 绘制表头 (周一到周日)
+                cols_header = st.columns(7)
+                days_name = ["一", "二", "三", "四", "五", "六", "日"]
+                for i, d_name in enumerate(days_name):
+                    cols_header[i].markdown(f"<div style='text-align:center; color:gray; font-size:12px'>{d_name}</div>", unsafe_allow_html=True)
+
+                # 绘制日期格子
+                for week in cal_matrix:
+                    cols = st.columns(7)
+                    for i, day_num in enumerate(week):
+                        with cols[i]:
+                            if day_num == 0:
+                                st.write("") # 空白
+                            else:
+                                amt = daily_sums.get(day_num, 0)
+                                if amt > 0:
+                                    # 有支出的日子：显示金额
+                                    st.markdown(f"""
+                                    <div class="cal-day" style="border: 1px solid #ff4b4b;">
+                                        <div class="cal-num">{day_num}</div>
+                                        <div class="cal-amt">{int(amt)}</div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    # 没支出的日子：变暗
+                                    st.markdown(f"""
+                                    <div class="cal-day" style="opacity: 0.3;">
+                                        <div class="cal-num">{day_num}</div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                
+                st.divider()
+
+                # === 下方图表区 ===
                 daily_data = df_plot.groupby(['day', 'category'])['amount'].sum().reset_index()
                 last_day = calendar.monthrange(b_year, b_month)[1]
                 fig = px.bar(
                     daily_data, x='day', y='amount', color='category', 
-                    title=f"{b_year}年{b_month}月 每日分布",
+                    title=f"每日分布趋势",
                     labels={'day':'日期', 'amount':'金额 (RM)', 'category':'类别'},
                     text_auto='.0f', template="plotly_dark", log_y=use_log
                 )
@@ -331,23 +391,20 @@ with tab2:
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
                 
                 st.divider()
-                st.subheader("支出分类")
+                st.subheader("支出分类排行")
                 
-                # ⚡️ [新增功能] 左右布局：左边圈图，右边排行条形图
+                # 左右布局：左边圈图，右边排行条形图
                 pie_data = df_plot.groupby('category')['amount'].sum().reset_index()
                 
-                # 分成两列
                 col_chart, col_list = st.columns([1.6, 1], gap="medium")
                 
                 with col_chart:
                     fig_pie = px.pie(pie_data, values='amount', names='category', hole=0.5, color_discrete_sequence=px.colors.qualitative.Bold)
                     fig_pie.update_traces(textposition='outside', textinfo='label+percent', rotation=90, marker=dict(line=dict(color='#000000', width=1)))
-                    # 调整边距以适应布局
-                    fig_pie.update_layout(margin=dict(t=40, b=40, l=40, r=40), height=400, showlegend=False) 
+                    fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=350, showlegend=False) 
                     st.plotly_chart(fig_pie, use_container_width=True)
 
                 with col_list:
-                    # 准备数据：按金额从小到大排序（Plotly横向图是从下往上画，所以最大的在最上面）
                     bar_data = pie_data.sort_values('amount', ascending=False)
                     
                     fig_bar = px.bar(
@@ -356,21 +413,25 @@ with tab2:
                         y='category', 
                         orientation='h', 
                         text_auto='.2f',
-                        color='category', # 保持颜色一致
+                        color='category', 
                         color_discrete_sequence=px.colors.qualitative.Bold
                     )
                     
-                    # 优化样式：去掉多余的坐标轴，让它看起来像一个列表
+                    # ⚡️ [修复] 彻底固定坐标轴，防止手机误触滚动
                     fig_bar.update_layout(
-                        title="分类排行 (RM)",
-                        xaxis_visible=False, # 隐藏X轴
-                        yaxis_title=None,    # 隐藏Y轴标题
-                        showlegend=False,    # 隐藏图例（因为左边有了或者直接看字）
-                        margin=dict(l=0, r=0, t=40, b=0),
-                        height=400,
-                        template="plotly_dark"
+                        xaxis_visible=False, 
+                        yaxis_title=None,    
+                        showlegend=False,
+                        margin=dict(l=0, r=0, t=20, b=0),
+                        height=350,
+                        template="plotly_dark",
+                        dragmode=False, # 禁止拖拽
                     )
-                    st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
+                    # 强制固定 X 和 Y 轴，禁止缩放
+                    fig_bar.update_xaxes(fixedrange=True)
+                    fig_bar.update_yaxes(fixedrange=True)
+
+                    st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False, 'staticPlot': True}) 
 
             else:
                 st.warning("该月无有效支出")
@@ -489,6 +550,7 @@ with tab4:
         )
     else:
         st.info("暂无数据可导出")
+
 
 
 
