@@ -441,74 +441,139 @@ with tab2:
     else:
         st.info("暂无数据")
 
-# === ⚡️ Tab 3: AI 宏观分析 (新功能) ===
+# === ⚡️ Tab 3: AI 宏观分析 (带对话功能版) ===
 with tab3:
-    st.header("🤖 AI 宏观消费洞察")
-    st.info("这里使用 AI 自动识别你的每一笔支出，并将其归类为更通用的「宏观大类」（如：旅游、餐饮、投资），帮助你跳出琐碎的细节，看清大方向。")
+    st.header("🤖 AI 宏观消费洞察 & 对话")
+    st.info("AI 将自动把你的支出归类为「宏观大类」，并允许你针对这些数据进行自由提问。")
     
+    # --- 1. 初始化 Session State (用于保留分析结果和对话记录) ---
+    if 'ai_chat_history' not in st.session_state:
+        st.session_state['ai_chat_history'] = []
+    
+    # 如果还没有分析结果，显示分析界面
     if df_all.empty:
         st.warning("暂无数据可分析")
     else:
-        # 1. 准备数据
+        # 数据准备
         df_analysis = df_all[df_all['type'] == 'Expense'].copy()
         
-        # 2. 筛选时间
+        # 筛选年份
         col_t1, col_t2 = st.columns(2)
-        target_year = col_t1.selectbox("选择年份", sorted(df_analysis['date'].apply(lambda x: x.year).unique(), reverse=True), key="ai_year")
+        u_years = sorted(df_analysis['date'].apply(lambda x: x.year).unique(), reverse=True)
+        target_year = col_t1.selectbox("选择年份", u_years, key="ai_year")
         
-        # 3. 提取当年的唯一项目名
+        # 提取当年的数据
         df_target = df_analysis[df_analysis['date'].apply(lambda x: x.year) == target_year]
-        if df_target.empty:
-            st.warning(f"{target_year} 年无支出数据")
-        else:
-            unique_items = df_target['item'].unique().tolist()
-            
-            if st.button("🧠 开始 AI 智能归类分析", type="primary"):
-                with st.spinner("AI 正在思考并归类你的所有账单... (可能需要十几秒)"):
-                    # 将 item 列表转为 JSON 字符串发送给 AI
+        
+        # --- 2. 分析按钮逻辑 ---
+        # 只有当没有分析结果，或者用户切换了年份时，才显示“开始分析”按钮
+        # 这里为了简单，提供一个“重新分析”的按钮来覆盖旧结果
+        if st.button("🧠 开始 (或重新) AI 智能归类分析", type="primary"):
+            if df_target.empty:
+                st.warning(f"{target_year} 年无支出数据")
+            else:
+                unique_items = df_target['item'].unique().tolist()
+                with st.spinner("AI 正在思考并归类你的所有账单..."):
+                    # 调用 AI 归类 (复用你原有的函数)
                     mapping_dict = ai_categorize_macro(json.dumps(unique_items, ensure_ascii=False))
                     
                     if mapping_dict:
-                        # 4. 将 AI 的归类映射回 DataFrame
+                        # 映射回 DataFrame
                         df_target['Macro Category'] = df_target['item'].map(mapping_dict).fillna("其他")
                         
-                        # 5. 保存结果到 session_state 避免刷新丢失
+                        # 🔥 关键：保存到 Session State
                         st.session_state['ai_macro_result'] = df_target
+                        st.session_state['current_analysis_year'] = target_year
+                        # 清空旧的对话记录，因为数据变了
+                        st.session_state['ai_chat_history'] = []
                         st.success("分析完成！")
+                        st.rerun() # 刷新页面以显示结果
                     else:
                         st.error("AI 分析失败，请重试")
 
-            # 6. 展示结果
-            if 'ai_macro_result' in st.session_state:
-                df_res = st.session_state['ai_macro_result']
+        # --- 3. 展示分析结果 (如果存在) ---
+        if 'ai_macro_result' in st.session_state:
+            # 确保显示的是当前选择年份的数据（如果用户切了年份但没点分析，这里显示旧的也行，或者强制隐藏，这里选择显示已分析的数据）
+            df_res = st.session_state['ai_macro_result']
+            analyzed_year = st.session_state.get('current_analysis_year', target_year)
+            
+            st.divider()
+            st.subheader(f"📈 {analyzed_year} 宏观消费分布")
+            
+            # 统计大类
+            macro_stats = df_res.groupby('Macro Category')['amount'].sum().reset_index().sort_values('amount', ascending=False)
+            
+            c_chart, c_data = st.columns([1.5, 1])
+            with c_chart:
+                fig = px.pie(macro_stats, values='amount', names='Macro Category', 
+                             title="AI 智能大类占比", hole=0.4, 
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig.update_traces(textposition='outside', textinfo='label+percent')
+                st.plotly_chart(fig, use_container_width=True)
                 
-                # 统计大类金额
-                macro_stats = df_res.groupby('Macro Category')['amount'].sum().reset_index().sort_values('amount', ascending=False)
+            with c_data:
+                st.write("📋 **详细归类清单**")
+                st.dataframe(
+                    macro_stats.style.format({"amount": "{:.2f}"}), 
+                    use_container_width=True,
+                    column_config={"Macro Category": "宏观大类", "amount": "总金额 (RM)"}
+                )
+            
+            with st.expander("🔍 查看原始归类明细"):
+                st.dataframe(df_res[['date', 'item', 'amount', 'Macro Category']].sort_values('date', ascending=False))
+
+            # --- 4. 💬 AI 数据对话窗口 (新增功能) ---
+            st.markdown("---")
+            st.subheader(f"💬 与 {analyzed_year} 年的账单对话")
+            
+            # 显示历史消息
+            for msg in st.session_state['ai_chat_history']:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+            # 处理用户输入
+            if prompt := st.chat_input("问问 AI，比如：'我在吃的方面花了多少钱？' 或 '哪个月开销最大？'"):
+                # 1. 显示用户消息
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                st.session_state['ai_chat_history'].append({"role": "user", "content": prompt})
+
+                # 2. 调用 AI 回答
+                # 准备上下文数据 (为了节省 Token，只发必要列，并转为 CSV 文本)
+                context_data = df_res[['date', 'item', 'amount', 'Macro Category']].to_csv(index=False)
                 
-                st.divider()
-                st.subheader(f"📈 {target_year} 宏观消费分布")
+                chat_model_name = 'gemini-2.5-flash' # 保持和你的一致
                 
-                c_chart, c_data = st.columns([1.5, 1])
-                
-                with c_chart:
-                    fig = px.pie(macro_stats, values='amount', names='Macro Category', 
-                                 title="AI 智能大类占比",
-                                 hole=0.4, 
-                                 color_discrete_sequence=px.colors.qualitative.Pastel)
-                    fig.update_traces(textposition='outside', textinfo='label+percent')
-                    st.plotly_chart(fig, use_container_width=True)
+                try:
+                    chat_model = genai.GenerativeModel(chat_model_name)
+                    # 构建 Prompt
+                    full_prompt = f"""
+                    你是一个专业的私人财务顾问。用户正在询问关于他 {analyzed_year} 年的账单数据。
                     
-                with c_data:
-                    st.write("📋 **详细归类清单**")
-                    st.dataframe(
-                        macro_stats.style.format({"amount": "{:.2f}"}), 
-                        use_container_width=True,
-                        column_config={"Macro Category": "宏观大类", "amount": "总金额 (RM)"}
-                    )
-                
-                # 展示具体的映射情况，让用户知道 AI 把什么归类成了什么
-                with st.expander("🔍 查看 AI 是如何归类的"):
-                    st.dataframe(df_res[['date', 'item', 'amount', 'Macro Category']].sort_values('date', ascending=False))
+                    以下是用户的详细支出数据 (CSV格式):
+                    {context_data}
+                    
+                    用户的当前问题: "{prompt}"
+                    
+                    要求:
+                    1. 根据上面的数据进行计算或分析来回答问题。
+                    2. 回答要自然、幽默一点。
+                    3. 如果涉及金额，保留两位小数，单位 RM。
+                    4. 如果用户问具体的统计（比如“最贵的那个”），请明确指出是哪一笔。
+                    5. 使用中文回答。
+                    """
+                    
+                    with st.chat_message("assistant"):
+                        with st.spinner("AI 正在查阅账本..."):
+                            response = chat_model.generate_content(full_prompt)
+                            ai_reply = response.text
+                            st.markdown(ai_reply)
+                            
+                    # 保存 AI 回复
+                    st.session_state['ai_chat_history'].append({"role": "assistant", "content": ai_reply})
+                    
+                except Exception as e:
+                    st.error(f"对话出错: {e}")
 
 # === Tab 4: 添加类别/数据导出 ===
 with tab4:
@@ -553,6 +618,7 @@ with tab4:
         )
     else:
         st.info("暂无数据可导出")
+
 
 
 
