@@ -1,7 +1,10 @@
 """Stable Streamlit entry point for WY Wallet V2.
 
-The full implementation lives in app_rich.py so analytics and interface work can
-be updated independently while the deployed main-file path stays v2/app.py.
+The implementation lives in app_rich.py. runpy executes it on every Streamlit
+rerun, avoiding normal Python module caching after buttons or filters change.
 """
 
-from app_rich import *  # noqa: F401,F403
+from pathlib import Path
+import runpy
+
+runpy.run_path(str(Path(__file__).with_name("app_rich.py")), run_name="__main__")
