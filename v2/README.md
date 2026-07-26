@@ -1,39 +1,34 @@
 # WY Wallet V2
 
-This folder contains an isolated Streamlit V2 entry point. The original root `app.py` and existing website remain unchanged.
+This directory contains the isolated V2 application. The existing production entry point in the repository root remains unchanged.
 
-## Deploy as a second Streamlit app
+## Deploy as a separate Streamlit app
 
-1. Create a new app in Streamlit Community Cloud.
-2. Select repository `wuyaoenterprise/WY-Wallet`.
-3. Select branch `agent/wy-wallet-v2-redesign` while testing.
-4. Set the main file path to `v2/app.py`.
-5. Copy the same secrets used by the original app:
+- Repository: `wuyaoenterprise/WY-Wallet`
+- Branch: `agent/wy-wallet-v2-redesign`
+- Main file: `v2/app.py`
+- Copy the existing `SUPABASE_URL`, `SUPABASE_KEY`, and `GOOGLE_API_KEY` values into the new Streamlit app secrets.
 
-```toml
-SUPABASE_URL = "..."
-SUPABASE_KEY = "..."
-GOOGLE_API_KEY = "..."
-```
+V2 continues to use the existing Supabase `transactions` and `categories` tables. Changes made in either site therefore affect the same transaction data.
 
-The V2 app reads and writes the existing Supabase `transactions` and `categories` tables. It performs no database migration.
+## Current V2 design
 
-## Changes included
-
-- New dashboard with current-month overview and month-over-month comparison
-- Responsive transaction cards
-- Search, year/month/type filters, and pagination
-- Delete confirmation and one-step restore for the last deleted transaction
-- Safer category deletion confirmation
-- Existing manual entry and AI receipt recognition retained
-- Monthly calendar, category charts, and annual trend retained
-- AI chat sends summary statistics instead of the complete yearly transaction CSV
+- Sidebar navigation and compact dashboard
+- Current-month income, expenses, balance, daily average, and comparison with the previous month
+- Professional transaction table with search, filters, sorting, row selection, editing, safe deletion, and one-step undo
+- Category creation integrated directly into the add and edit transaction flows
+- Receipt recognition with editable results
+- Reports organized as yearly trend, monthly detail, and category/item analysis
+- Yearly spending chart always shows January through December and starts the Y-axis at RM 0
+- Daily monthly chart also starts at RM 0
+- Category ranking uses readable horizontal bars instead of relying on pie charts
+- AI analysis receives summarized statistics rather than the complete yearly ledger
 - Excel and CSV export
-- Additive CSV/Excel import with preview and confirmation
-- Clearer database error reporting
+- CSV and Excel import with duplicate detection
+- Category rename/merge workflow that also updates old transactions
 
-## Safety notes
+## Safety
 
-- Import only adds records and can create duplicates.
-- Restoring a deleted record creates a new database ID while preserving its content.
-- The original root application and root dependency file are intentionally untouched.
+- No database migration is included.
+- Root `app.py` and root `requirements.txt` are not modified.
+- Keep Pull Request #1 as a draft until the separate V2 deployment has been tested.
