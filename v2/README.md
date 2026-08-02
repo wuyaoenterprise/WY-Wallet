@@ -15,8 +15,9 @@ V2 continues to use the existing Supabase `transactions` and `categories` tables
 
 - `v2/app.py` is the stable Streamlit entry point.
 - `v2/app_rich.py` contains the full interface, database operations, AI functions, and reports.
+- `v2/pages/5_数据导入.py` is a separate external-data import wizard.
 - The entry point uses `runpy` so the implementation executes again on every Streamlit rerun instead of being held in Python's normal import cache.
-- `.github/workflows/v2-syntax-check.yml` checks that both V2 Python files compile.
+- `.github/workflows/v2-syntax-check.yml` checks that all V2 Python files compile.
 
 ## Current V2 design
 
@@ -27,8 +28,24 @@ V2 continues to use the existing Supabase `transactions` and `categories` tables
 - Receipt recognition with editable results
 - AI analysis receives summarized statistics rather than the complete yearly ledger
 - Excel and CSV export
-- CSV and Excel import with duplicate detection
 - Category rename/merge workflow that also updates old transactions
+
+## External import wizard
+
+The multipage import interface accepts CSV, XLSX, XLS, and JSON exports from other finance apps or banks.
+
+- Automatically detects common Date, Description, Payee, Category, Amount, Debit, Credit, Type, Memo, and Currency columns
+- Lets the user manually map every source column
+- Supports a single signed amount column or separate debit/credit columns
+- Supports source type labels, sign-based type detection, or forcing all rows to income/expense
+- Supports common date formats and Unix timestamps
+- Handles UTF-8, GB18030, Big5, and other common CSV encodings
+- Can filter by currency and assign a fallback category
+- Can create missing categories automatically
+- Previews normalized data before database writes
+- Detects invalid rows and exact duplicate transactions
+- Exports rejected rows for correction
+- Inserts in batches and never overwrites or deletes existing records
 
 ## Report design
 
@@ -62,5 +79,6 @@ All spending bar charts use a zero-based Y-axis. Annual charts always include al
 
 - No database migration is included.
 - Root `app.py` and root `requirements.txt` are not modified.
-- V2 writes to the same Supabase data as the old site, so test deletion and category merging carefully.
+- V2 writes to the same Supabase data as the old site, so test deletion, category merging, and imports carefully.
+- Imports only add records. A failed multi-batch import may have inserted earlier batches, so rerun duplicate detection before retrying.
 - Keep Pull Request #1 as a draft until the separate V2 deployment has been tested.
