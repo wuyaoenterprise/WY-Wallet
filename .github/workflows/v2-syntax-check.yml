@@ -1,4 +1,4 @@
-name: V2 dependency and syntax check
+name: V2 dependency, schema and syntax check
 
 on:
   pull_request:
@@ -25,3 +25,29 @@ jobs:
         run: python -m pip install -r v2/requirements.txt
       - name: Compile all V2 Python files
         run: python -m compileall -q v2
+      - name: Validate Gemini response schema
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          import sys
+          import types
+
+          source_path = Path("v2/ai_import_impl.py")
+          tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+          required_classes = {"ExtractedTransaction", "ExtractionResult"}
+          selected = []
+          for node in tree.body:
+              if isinstance(node, ast.ImportFrom) and node.module in {"__future__", "typing", "pydantic"}:
+                  selected.append(node)
+              elif isinstance(node, ast.ClassDef) and node.name in required_classes:
+                  selected.append(node)
+
+          module = types.ModuleType("wy_wallet_ai_schema_smoke")
+          sys.modules[module.__name__] = module
+          exec(compile(ast.Module(body=selected, type_ignores=[]), str(source_path), "exec"), module.__dict__)
+          schema = module.ExtractionResult.model_json_schema()
+          assert "transactions" in schema.get("properties", {}), schema
+          assert "ExtractedTransaction" in schema.get("$defs", {}), schema
+          print("Gemini response schema resolved successfully")
+          PY
