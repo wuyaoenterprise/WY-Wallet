@@ -8,6 +8,8 @@ small compatibility adapters before executing it:
 2. The transaction ledger order is controlled by the app's explicit sort menu,
    not accidental clicks on table headers.
 3. Import interfaces have been removed; export backup remains available.
+4. Every Plotly chart receives one calm visual system and locked axes, avoiding
+   accidental zooming, panning, legend hiding, or fullscreen interactions.
 """
 
 from pathlib import Path
@@ -20,6 +22,65 @@ import supabase as supabase_module
 
 BATCH_SIZE = 1000
 MAX_TRANSACTION_ROWS = 100_000
+
+# Inspired by the clearer palette of the original wallet, but restrained enough
+# for a professional finance dashboard.
+CHART_COLORS = [
+    "#5B8FF9",
+    "#61DDAA",
+    "#F6BD16",
+    "#7262FD",
+    "#78D3F8",
+    "#9661BC",
+    "#F6903D",
+    "#E8684A",
+    "#6DC8EC",
+    "#9270CA",
+]
+SEMANTIC_COLORS = {
+    "收入": "#35B77E",
+    "Income": "#35B77E",
+    "支出": "#EF6464",
+    "Expense": "#EF6464",
+    "结余": "#F6BD16",
+    "Balance": "#F6BD16",
+}
+LOCKED_CHART_CONFIG = {
+    "displayModeBar": False,
+    "displaylogo": False,
+    "scrollZoom": False,
+    "doubleClick": False,
+    "showTips": False,
+    "editable": False,
+    "responsive": True,
+}
+CHART_CSS = """
+<style>
+[data-testid="stPlotlyChart"] {
+    border: 1px solid var(--wy-border, rgba(128,128,128,.22));
+    border-radius: 16px;
+    padding: .35rem .45rem .1rem;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+    box-shadow: 0 8px 28px rgba(0,0,0,.08);
+    overflow: hidden;
+}
+[data-testid="stPlotlyChart"] [data-testid="stElementToolbar"] {
+    display: none !important;
+}
+[data-testid="stPlotlyChart"] .js-plotly-plot,
+[data-testid="stPlotlyChart"] .plot-container {
+    touch-action: pan-y !important;
+}
+@media (max-width: 760px) {
+    [data-testid="stPlotlyChart"] {
+        border-radius: 12px;
+        padding: .15rem .1rem 0;
+        box-shadow: none;
+    }
+}
+</style>
+"""
 
 
 class _QueryProxy:
@@ -123,10 +184,12 @@ _paginated_create_client._wy_original = _original_create_client
 # Keep references to the real Streamlit functions so wrappers do not stack on
 # reruns when Streamlit reuses modules.
 _original_dataframe = getattr(st.dataframe, "_wy_original", st.dataframe)
+_original_plotly_chart = getattr(st.plotly_chart, "_wy_original", st.plotly_chart)
 _original_file_uploader = getattr(st.file_uploader, "_wy_original", st.file_uploader)
 _original_tabs = getattr(st.tabs, "_wy_original", st.tabs)
 _original_warning = getattr(st.warning, "_wy_original", st.warning)
 _original_markdown = getattr(st.markdown, "_wy_original", st.markdown)
+_chart_css_injected = False
 
 
 def _stable_dataframe(*args, **kwargs):
@@ -135,6 +198,129 @@ def _stable_dataframe(*args, **kwargs):
         # still opens transaction details.
         kwargs["selection_mode"] = ["single-row", "single-column"]
     return _original_dataframe(*args, **kwargs)
+
+
+def _polish_figure(fig):
+    """Apply a consistent, readable and non-zoomable finance-chart style."""
+    if not hasattr(fig, "update_layout") or not hasattr(fig, "data"):
+        return fig
+
+    trace_types = {getattr(trace, "type", "") for trace in fig.data}
+    horizontal_bar = any(
+        getattr(trace, "type", "") == "bar"
+        and getattr(trace, "orientation", None) == "h"
+        for trace in fig.data
+    )
+    pie_only = bool(trace_types) and trace_types.issubset({"pie"})
+
+    fig.update_layout(
+        colorway=CHART_COLORS,
+        dragmode=False,
+        clickmode="none",
+        uirevision="wy-wallet-fixed-chart",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=18, r=18, t=34, b=18),
+        font=dict(size=13),
+        hoverlabel=dict(
+            bgcolor="rgba(20,24,33,.96)",
+            bordercolor="rgba(255,255,255,.16)",
+            font=dict(color="#FFFFFF", size=12),
+        ),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+            font=dict(size=11),
+            itemclick=False,
+            itemdoubleclick=False,
+        ),
+        transition=dict(duration=180, easing="cubic-in-out"),
+    )
+
+    if pie_only:
+        fig.update_layout(hovermode="closest")
+    elif getattr(fig.layout, "hovermode", None) in (None, False):
+        fig.update_layout(hovermode="x unified")
+
+    # Fixed axes stop mouse drags, double-clicks and mobile touches from changing
+    # the visible range. Subtle grids keep amounts easy to compare.
+    try:
+        fig.update_xaxes(
+            fixedrange=True,
+            automargin=True,
+            showgrid=horizontal_bar,
+            gridcolor="rgba(148,163,184,.13)",
+            griddash="dot",
+            zeroline=False,
+            tickfont=dict(size=11),
+            title_font=dict(size=12),
+        )
+        fig.update_yaxes(
+            fixedrange=True,
+            automargin=True,
+            showgrid=not horizontal_bar,
+            gridcolor="rgba(148,163,184,.13)",
+            griddash="dot",
+            zeroline=False,
+            tickfont=dict(size=11),
+            title_font=dict(size=12),
+        )
+    except Exception:
+        pass
+
+    # Use fixed financial semantics for cash-flow series while category series
+    # continue through the restrained multi-category palette.
+    for trace in fig.data:
+        semantic = SEMANTIC_COLORS.get(str(getattr(trace, "name", "")))
+        if semantic:
+            try:
+                if getattr(trace, "type", "") in {"scatter", "line"}:
+                    trace.update(line=dict(color=semantic, width=3), marker=dict(color=semantic, size=7))
+                else:
+                    trace.update(marker_color=semantic)
+            except Exception:
+                pass
+
+    try:
+        fig.update_traces(
+            marker_line_width=0,
+            opacity=.94,
+            cliponaxis=False,
+            selector=dict(type="bar"),
+        )
+        # Plotly 6 supports rounded bar corners. Ignore gracefully on older builds.
+        fig.update_traces(marker_cornerradius=7, selector=dict(type="bar"))
+    except Exception:
+        pass
+
+    try:
+        fig.update_traces(
+            line=dict(width=3),
+            marker=dict(size=7),
+            selector=dict(type="scatter"),
+        )
+    except Exception:
+        pass
+
+    try:
+        fig.update_traces(
+            marker=dict(line=dict(color="rgba(255,255,255,.18)", width=1.5)),
+            textfont=dict(size=12),
+            pull=0,
+            selector=dict(type="pie"),
+        )
+    except Exception:
+        pass
+
+    return fig
+
+
+def _fixed_plotly_chart(figure_or_data, *args, **kwargs):
+    figure_or_data = _polish_figure(figure_or_data)
+    supplied = dict(kwargs.get("config") or {})
+    supplied.update(LOCKED_CHART_CONFIG)
+    kwargs["config"] = supplied
+    return _original_plotly_chart(figure_or_data, *args, **kwargs)
 
 
 def _without_import_uploader(label, *args, **kwargs):
@@ -156,15 +342,22 @@ def _without_import_warning(body, *args, **kwargs):
 
 
 def _clean_settings_copy(body, *args, **kwargs):
+    global _chart_css_injected
     if isinstance(body, str):
         body = body.replace(
             "管理类别、导出备份，以及安全导入历史数据。",
             "管理类别并导出备份。",
         )
+        # The first app stylesheet is the safest place to append chart-card CSS,
+        # after set_page_config has already run.
+        if not _chart_css_injected and "<style>" in body:
+            body = body + CHART_CSS
+            _chart_css_injected = True
     return _original_markdown(body, *args, **kwargs)
 
 
 _stable_dataframe._wy_original = _original_dataframe
+_fixed_plotly_chart._wy_original = _original_plotly_chart
 _without_import_uploader._wy_original = _original_file_uploader
 _backup_only_tabs._wy_original = _original_tabs
 _without_import_warning._wy_original = _original_warning
@@ -172,6 +365,7 @@ _clean_settings_copy._wy_original = _original_markdown
 
 supabase_module.create_client = _paginated_create_client
 st.dataframe = _stable_dataframe
+st.plotly_chart = _fixed_plotly_chart
 st.file_uploader = _without_import_uploader
 st.tabs = _backup_only_tabs
 st.warning = _without_import_warning
@@ -182,6 +376,7 @@ try:
 finally:
     supabase_module.create_client = _original_create_client
     st.dataframe = _original_dataframe
+    st.plotly_chart = _original_plotly_chart
     st.file_uploader = _original_file_uploader
     st.tabs = _original_tabs
     st.warning = _original_warning
