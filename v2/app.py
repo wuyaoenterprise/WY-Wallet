@@ -91,6 +91,7 @@ class _QueryProxy:
         return SimpleNamespace(
             data=all_rows,
             count=getattr(first_response, "count", None),
+            status_code=getattr(first_response, "status_code", None),
         )
 
 
