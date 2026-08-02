@@ -16,7 +16,7 @@ V2 continues to use the existing Supabase `transactions` and `categories` tables
 - `v2/app.py` is the stable Streamlit entry point.
 - `v2/app_rich.py` contains the full interface, database operations, AI functions, and reports.
 - The entry point uses `runpy` so the implementation executes again on every Streamlit rerun.
-- Transaction SELECT queries are automatically paginated in 1,000-row batches so historical records are not hidden by the Supabase per-request row limit.
+- Transaction SELECT queries are automatically paginated in 1,000-row batches, up to a defensive limit of 100,000 rows, so historical records are not hidden by the Supabase per-request row limit.
 - `.github/workflows/v2-syntax-check.yml` installs V2 dependencies and compiles all remaining Python files.
 
 ## Current V2 design
