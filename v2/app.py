@@ -19,6 +19,7 @@ import supabase as supabase_module
 
 
 BATCH_SIZE = 1000
+MAX_TRANSACTION_ROWS = 100_000
 
 
 class _QueryProxy:
@@ -77,7 +78,7 @@ class _QueryProxy:
         all_rows = []
         first_response = None
         offset = 0
-        while True:
+        while offset < MAX_TRANSACTION_ROWS:
             response = self._build((offset, offset + BATCH_SIZE - 1)).execute()
             if first_response is None:
                 first_response = response
