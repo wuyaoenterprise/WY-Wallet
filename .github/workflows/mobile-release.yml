@@ -33,7 +33,8 @@ jobs:
           flutter create .mobile_build --platforms=android --org com.wuyaoenterprise --project-name wywallet
           cp mobile/pubspec.yaml .mobile_build/pubspec.yaml
           cp mobile/analysis_options.yaml .mobile_build/analysis_options.yaml
-          cp -R mobile/lib .mobile_build/lib
+          mkdir -p .mobile_build/lib
+          base64 -d mobile/source/main.dart.gz.b64 | gunzip > .mobile_build/lib/main.dart
           mkdir -p .mobile_build/tool
           cp mobile/tool/patch_android.py .mobile_build/tool/patch_android.py
           python .mobile_build/tool/patch_android.py
