@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+env:
+  MOBILE_SUPABASE_URL: https://ggnmbgiaqhftilqtlslg.supabase.co
+  MOBILE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_UO8q3y5QEcIBZRctYqIM1w_bzIAtAgL
+
 jobs:
   android-debug:
     runs-on: ubuntu-latest
@@ -39,14 +43,14 @@ jobs:
       - name: Analyze
         working-directory: .mobile_build
         run: flutter analyze --no-fatal-infos
-      - name: Build installable debug APK
+      - name: Build connected debug APK
         working-directory: .mobile_build
         run: |
           flutter build apk --debug \
-            --dart-define=SUPABASE_URL=https://example.supabase.co \
-            --dart-define=SUPABASE_PUBLISHABLE_KEY=sb_publishable_placeholder
+            --dart-define=SUPABASE_URL="$MOBILE_SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$MOBILE_SUPABASE_PUBLISHABLE_KEY"
       - uses: actions/upload-artifact@v4
         with:
-          name: wy-wallet-mobile-debug
+          name: wy-wallet-mobile-connected-debug
           path: .mobile_build/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 14
