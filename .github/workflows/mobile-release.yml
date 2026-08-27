@@ -1,0 +1,69 @@
+name: Build WY Wallet APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label, e.g. 0.1.0"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Validate required backend secrets
+        env:
+          SUPABASE_URL: ${{ secrets.MOBILE_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.MOBILE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing MOBILE_SUPABASE_URL" && exit 1)
+          test -n "$SUPABASE_KEY" || (echo "Missing MOBILE_SUPABASE_PUBLISHABLE_KEY" && exit 1)
+      - name: Generate Android project
+        run: |
+          rm -rf .mobile_build
+          flutter create .mobile_build --platforms=android --org com.wuyaoenterprise --project-name wywallet
+          cp mobile/pubspec.yaml .mobile_build/pubspec.yaml
+          cp mobile/analysis_options.yaml .mobile_build/analysis_options.yaml
+          cp -R mobile/lib .mobile_build/lib
+          mkdir -p .mobile_build/tool
+          cp mobile/tool/patch_android.py .mobile_build/tool/patch_android.py
+          python .mobile_build/tool/patch_android.py
+      - name: Install dependencies
+        working-directory: .mobile_build
+        run: flutter pub get
+      - name: Analyze
+        working-directory: .mobile_build
+        run: flutter analyze
+      - name: Build release APK
+        working-directory: .mobile_build
+        env:
+          SUPABASE_URL: ${{ secrets.MOBILE_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.MOBILE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_KEY"
+          cp build/app/outputs/flutter-apk/app-release.apk ../WY-Wallet-${{ inputs.version }}.apk
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WY-Wallet-${{ inputs.version }}
+          path: WY-Wallet-${{ inputs.version }}.apk
+          retention-days: 30
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="mobile-v${{ inputs.version }}-${{ github.run_number }}"
+          gh release create "$TAG" WY-Wallet-${{ inputs.version }}.apk \
+            --title "WY Wallet Mobile ${{ inputs.version }}" \
+            --notes "Android APK for the Google-account mobile version of WY Wallet."
