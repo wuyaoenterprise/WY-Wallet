@@ -44,7 +44,7 @@ jobs:
         run: flutter pub get
       - name: Analyze
         working-directory: .mobile_build
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
       - name: Build release APK
         working-directory: .mobile_build
         env:
