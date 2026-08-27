@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+env:
+  MOBILE_SUPABASE_URL: https://ggnmbgiaqhftilqtlslg.supabase.co
+  MOBILE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_UO8q3y5QEcIBZRctYqIM1w_bzIAtAgL
+
 jobs:
   release-apk:
     runs-on: ubuntu-latest
@@ -20,13 +24,6 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Validate required backend secrets
-        env:
-          SUPABASE_URL: ${{ secrets.MOBILE_SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.MOBILE_SUPABASE_PUBLISHABLE_KEY }}
-        run: |
-          test -n "$SUPABASE_URL" || (echo "Missing MOBILE_SUPABASE_URL" && exit 1)
-          test -n "$SUPABASE_KEY" || (echo "Missing MOBILE_SUPABASE_PUBLISHABLE_KEY" && exit 1)
       - name: Generate Android project
         run: |
           rm -rf .mobile_build
@@ -47,13 +44,10 @@ jobs:
         run: flutter analyze --no-fatal-infos
       - name: Build release APK
         working-directory: .mobile_build
-        env:
-          SUPABASE_URL: ${{ secrets.MOBILE_SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.MOBILE_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           flutter build apk --release \
-            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_KEY"
+            --dart-define=SUPABASE_URL="$MOBILE_SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$MOBILE_SUPABASE_PUBLISHABLE_KEY"
           cp build/app/outputs/flutter-apk/app-release.apk ../WY-Wallet-${{ inputs.version }}.apk
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
