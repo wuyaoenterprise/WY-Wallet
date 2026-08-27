@@ -25,6 +25,7 @@ jobs:
         run: |
           rm -rf .mobile_build
           flutter create .mobile_build --platforms=android --org com.wuyaoenterprise --project-name wywallet
+          rm -rf .mobile_build/test
           cp mobile/pubspec.yaml .mobile_build/pubspec.yaml
           cp mobile/analysis_options.yaml .mobile_build/analysis_options.yaml
           mkdir -p .mobile_build/lib
