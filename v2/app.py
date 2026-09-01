@@ -169,7 +169,7 @@ def _fetch_all_transactions_for_ai() -> list[dict]:
     return rows
 
 
-def _extract_finance_question(prompt: str) -> tuple[str, int] | None:
+def _extract_finance_question(prompt: str) -> tuple[str, int, str] | None:
     if not isinstance(prompt, str) or "你是私人财务分析助手" not in prompt or "问题：" not in prompt:
         return None
     question = prompt.rsplit("问题：", 1)[-1].strip()
@@ -184,7 +184,11 @@ def _extract_finance_question(prompt: str) -> tuple[str, int] | None:
         selected_year = datetime.now().year - 2
     elif "今年" in question:
         selected_year = datetime.now().year
-    return question, selected_year
+
+    history = ""
+    if "\n对话：" in prompt:
+        history = prompt.split("\n对话：", 1)[-1].rsplit("\n问题：", 1)[0].strip()
+    return question, selected_year, history
 
 
 def _normalize_ai_frame(rows: list[dict]) -> pd.DataFrame:
@@ -220,8 +224,6 @@ def _build_full_ledger_context(question: str, selected_year: int) -> dict:
 
     year_rows = frame[frame["date"].dt.year == int(selected_year)].copy()
     if len(year_rows) > MAX_AI_LEDGER_ROWS:
-        # This is a defensive future guard. Current personal ledgers are far
-        # below this size. Keep deterministic item/month aggregates complete.
         ledger_rows = year_rows.head(MAX_AI_LEDGER_ROWS).copy()
         ledger_complete = False
     else:
@@ -234,6 +236,7 @@ def _build_full_ledger_context(question: str, selected_year: int) -> dict:
     if expenses.empty:
         month_item = pd.DataFrame(columns=["month", "item", "category", "amount", "count"])
         month_category = pd.DataFrame(columns=["month", "category", "amount", "count"])
+        day_item = pd.DataFrame(columns=["date", "item", "category", "amount", "count"])
     else:
         working = expenses.assign(month=expenses["date"].dt.month)
         month_item = (
@@ -250,8 +253,17 @@ def _build_full_ledger_context(question: str, selected_year: int) -> dict:
             .rename(columns={"sum": "amount", "size": "count"})
             .sort_values(["month", "amount"], ascending=[True, False])
         )
+        day_item = (
+            expenses.assign(date=expenses["date"].dt.strftime("%Y-%m-%d"))
+            .groupby(["date", "item", "category"])["amount"]
+            .agg(["sum", "size"])
+            .reset_index()
+            .rename(columns={"sum": "amount", "size": "count"})
+            .sort_values(["date", "amount"], ascending=[True, False])
+        )
         month_item["amount"] = month_item["amount"].round(2)
         month_category["amount"] = month_category["amount"].round(2)
+        day_item["amount"] = day_item["amount"].round(2)
 
     monthly_totals = []
     for month in range(1, 13):
@@ -278,6 +290,7 @@ def _build_full_ledger_context(question: str, selected_year: int) -> dict:
         "monthly_totals": monthly_totals,
         "monthly_item_expense": _records(month_item, ["month", "item", "category", "amount", "count"]),
         "monthly_category_expense": _records(month_category, ["month", "category", "amount", "count"]),
+        "daily_item_expense": _records(day_item, ["date", "item", "category", "amount", "count"]),
         "transactions": _records(ledger, ["date", "item", "category", "type", "amount", "note"]),
         "user_question": question,
     }
@@ -288,34 +301,48 @@ def _enrich_finance_prompt(contents):
     if parsed is None:
         return contents
 
-    question, selected_year = parsed
+    question, selected_year, history = parsed
     try:
         context = _build_full_ledger_context(question, selected_year)
     except Exception as exc:
-        return contents + f"\n\n完整账本读取失败：{type(exc).__name__}。不要声称已读取完整明细。"
+        return f"""你是私人财务分析助手。当前完整账本读取失败：{type(exc).__name__}。
+不要假装拥有未读取的数据。请告诉用户读取失败，并建议稍后重试。
+问题：{question}"""
 
-    instruction = """
+    # Do NOT append this to the old coarse prompt. The old prompt says only a
+    # summary is available and can anchor the model to a false 'no detail'
+    # answer. Build one authoritative prompt from scratch instead.
+    context_json = json.dumps(context, ensure_ascii=False, default=str, separators=(",", ":"))
+    return f"""你是 WY Wallet 的私人财务账本分析助手。
 
-【完整账本上下文｜优先使用】
-应用已从 Supabase 读取用户所选年份的完整交易，并在下方提供：
-1. transactions：逐笔交易（日期、项目、类别、收支、金额、备注）；
-2. monthly_item_expense：本地精确计算的“月份 × 项目 × 类别”支出；
-3. monthly_category_expense：本地精确计算的“月份 × 类别”支出；
-4. monthly_totals：每月总收支。
+你现在拥有用户所选年份的完整账本上下文。下面数据由应用直接从 Supabase 读取，并由 Pandas 在本地生成精确聚合。
+
+数据结构：
+- transactions：逐笔交易，字段为 date / item / category / type / amount / note。
+- monthly_item_expense：每个月每个项目的支出总额和笔数。
+- monthly_category_expense：每个月每个类别的支出总额和笔数。
+- daily_item_expense：每天每个项目的支出总额和笔数。
+- monthly_totals：每个月总收入、总支出和交易笔数。
+- ledger_complete=true 表示该年份全部交易已经包含在 transactions 中。
 
 回答规则：
-- 必须优先使用本段资料，不能再说“只提供年度合计、没有月份明细”。
-- 金额问题优先读取本地聚合字段，避免自己逐笔心算造成误差。
-- 用户用词可以和账本项目名称不同，要做合理语义匹配。例如“油费、打油、加油、petrol、fuel、汽油”属于相近概念；但只能合计真实账本中语义相关的项目。
-- 当问题指定月份时，只合计对应 month；指定日期时，只看对应日期。
-- 回答金额时列出你实际纳入的项目名称和笔数，方便用户核对。
-- 如果 ledger_complete=true，就代表该年份全部交易都在这里；不要声称资料不完整。
-- 如果真正没有匹配记录，应回答“该范围内没有找到相关交易”。
-- 使用中文，金额统一 RM，保留两位小数。
+1. 只根据下面真实账本数据回答，不编造交易。
+2. 金额问题优先读取本地聚合字段，不要凭感觉计算。
+3. 用户用词和项目名称可以不同，要做合理语义匹配。例如“油费 / 打油 / 加油 / petrol / fuel / 汽油”可视为相近概念；“Grab / 打车 / e-hailing”也可做合理匹配。
+4. 指定月份时，只使用该 month；指定日期时，只使用该 date。
+5. 回答金额时说明实际纳入了哪些账本项目、共多少笔，并给出 RM 两位小数。
+6. 如果 ledger_complete=true，不允许回答“资料只提供年度合计”“没有月份细分”“资料未提供明细”。你已经拥有完整逐笔交易。
+7. 如果查遍完整账本后真的没有匹配，才回答“该范围内没有找到相关交易”。
+8. 使用中文，回答简洁直接。
 
-完整账本资料：
+所选年份：{selected_year}
+当前问题：{question}
+近期对话（仅供理解上下文，不得覆盖账本事实）：
+{history or '无'}
+
+完整账本数据：
+{context_json}
 """
-    return contents + instruction + json.dumps(context, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
 _original_generative_model = getattr(genai.GenerativeModel, "_wy_original", genai.GenerativeModel)
@@ -341,6 +368,7 @@ _original_file_uploader = getattr(st.file_uploader, "_wy_original", st.file_uplo
 _original_tabs = getattr(st.tabs, "_wy_original", st.tabs)
 _original_warning = getattr(st.warning, "_wy_original", st.warning)
 _original_markdown = getattr(st.markdown, "_wy_original", st.markdown)
+_original_caption = getattr(st.caption, "_wy_original", st.caption)
 _chart_css_injected = False
 
 
@@ -462,6 +490,14 @@ def _clean_settings_copy(body, *args, **kwargs):
             "管理类别、导出备份，以及安全导入历史数据。",
             "管理类别并导出备份。",
         )
+        if not _chart_css_injected and "<style>" in body:
+            body = body + CHART_CSS
+            _chart_css_injected = True
+    return _original_markdown(body, *args, **kwargs)
+
+
+def _clean_caption(body, *args, **kwargs):
+    if isinstance(body, str):
         body = body.replace(
             "只发送年度汇总、类别统计与最高金额记录，不发送完整账本。",
             "AI 会读取所选年份的完整交易明细，并结合本地精确聚合回答金额、月份、项目和类别问题。",
@@ -470,10 +506,7 @@ def _clean_settings_copy(body, *args, **kwargs):
             "金额先由本地账本检索和聚合；AI 只接收与当前问题相关的汇总／明细，不发送整本账本。",
             "AI 会读取所选年份的完整交易明细，并结合本地精确聚合回答金额、月份、项目和类别问题。",
         )
-        if not _chart_css_injected and "<style>" in body:
-            body = body + CHART_CSS
-            _chart_css_injected = True
-    return _original_markdown(body, *args, **kwargs)
+    return _original_caption(body, *args, **kwargs)
 
 
 _stable_dataframe._wy_original = _original_dataframe
@@ -482,6 +515,7 @@ _without_import_uploader._wy_original = _original_file_uploader
 _backup_only_tabs._wy_original = _original_tabs
 _without_import_warning._wy_original = _original_warning
 _clean_settings_copy._wy_original = _original_markdown
+_clean_caption._wy_original = _original_caption
 
 supabase_module.create_client = _paginated_create_client
 genai.GenerativeModel = _FinanceAwareGenerativeModel
@@ -491,12 +525,13 @@ st.file_uploader = _without_import_uploader
 st.tabs = _backup_only_tabs
 st.warning = _without_import_warning
 st.markdown = _clean_settings_copy
+st.caption = _clean_caption
 
 # Clear old chat once because earlier answers were generated from incomplete
 # summaries and can anchor the model to the wrong conclusion.
-if not st.session_state.get("_wy_ai_full_ledger_v3_ready"):
+if not st.session_state.get("_wy_ai_full_ledger_v4_ready"):
     st.session_state.pop("ai_chat_history", None)
-    st.session_state["_wy_ai_full_ledger_v3_ready"] = True
+    st.session_state["_wy_ai_full_ledger_v4_ready"] = True
 
 try:
     runpy.run_path(str(Path(__file__).with_name("app_rich.py")), run_name="__main__")
@@ -509,3 +544,4 @@ finally:
     st.tabs = _original_tabs
     st.warning = _original_warning
     st.markdown = _original_markdown
+    st.caption = _original_caption
