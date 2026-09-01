@@ -312,9 +312,11 @@ def _fallback_subject_matches(subject: str | None, frame: pd.DataFrame) -> tuple
     for triggers, additions in groups:
         if any(token in needle for token in triggers):
             synonyms.extend(additions)
+
     def matches(value: str) -> bool:
         normalized = re.sub(r"\s+", "", value.casefold())
         return any(token and (token in normalized or normalized in token) for token in synonyms)
+
     return (
         [v for v in _candidate_values(frame, "item", 100_000) if matches(v)],
         [v for v in _candidate_values(frame, "category", 100_000) if matches(v)],
@@ -413,6 +415,15 @@ def _comparison_range(comparison: str, start: date, end: date) -> tuple[date, da
     return None
 
 
+def finance_list_frame(plan: FinanceQueryPlan, transactions: pd.DataFrame) -> pd.DataFrame:
+    start = _parse_iso(plan.date_from) or date(today_my().year, 1, 1)
+    end = min(_parse_iso(plan.date_to) or date(today_my().year, 12, 31), today_my())
+    base, _, _ = _filter_subject(transactions.copy(), plan)
+    ranged = _filter_range(base, start, end) if start <= end else base.iloc[0:0].copy()
+    rows = _flow_rows(ranged, plan.flow or "expense")
+    return rows.sort_values(["date", "amount"], ascending=[False, False]).reset_index(drop=True)
+
+
 def execute_finance_plan(plan: FinanceQueryPlan, transactions: pd.DataFrame) -> dict:
     start = _parse_iso(plan.date_from) or date(today_my().year, 1, 1)
     end = min(_parse_iso(plan.date_to) or date(today_my().year, 12, 31), today_my())
@@ -454,24 +465,20 @@ def execute_finance_plan(plan: FinanceQueryPlan, transactions: pd.DataFrame) -> 
             .head(50).round({"amount": 2}).to_dict("records")
         )
 
-    ui_transactions: list[dict] = []
     explanation_transactions: list[dict] = []
-    if plan.intent in {"list", "explain"}:
+    if plan.intent == "explain":
         rows = _flow_rows(ranged, flow).sort_values(["date", "amount"], ascending=[True, False]).copy()
         if not rows.empty:
             rows["date"] = rows["date"].dt.strftime("%Y-%m-%d")
             records = rows[["date", "item", "category", "type", "amount", "note"]].to_dict("records")
-            if plan.intent == "list":
-                ui_transactions = records
-            if plan.intent == "explain":
-                explanation_transactions = sorted(records, key=lambda row: float(row.get("amount") or 0), reverse=True)[:30]
+            explanation_transactions = sorted(records, key=lambda row: float(row.get("amount") or 0), reverse=True)[:30]
 
     return {
         "plan": plan.model_dump(), "matched": not relevant.empty, "authoritative_total": total,
         "transaction_count": int(len(relevant)), "matched_items": matched_items, "matched_categories": matched_categories,
         "date_from": start.isoformat(), "date_to": end.isoformat(), "monthly": monthly,
         "highest_month": highest, "lowest_month": lowest, "comparison": comparison,
-        "item_summary": item_summary, "ui_transactions": ui_transactions,
+        "item_summary": item_summary, "ui_transactions": [],
         "explanation_transactions": explanation_transactions,
     }
 
@@ -503,7 +510,8 @@ def authoritative_summary_markdown(result: dict) -> str:
     lines.append(f"范围：{result.get('date_from')} ～ {result.get('date_to')}")
     matched = list(result.get("matched_items") or []) + list(result.get("matched_categories") or [])
     if matched:
-        lines.append("匹配范围：" + "、".join(dict.fromkeys(str(v) for v in matched)[:20]))
+        unique_matched = list(dict.fromkeys(str(v) for v in matched))[:20]
+        lines.append("匹配范围：" + "、".join(unique_matched))
     comp = result.get("comparison")
     if comp:
         comp_value = f"{int(comp['value']):,} 笔" if aggregation == "count" else f"RM {float(comp['value']):,.2f}"
