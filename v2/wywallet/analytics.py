@@ -29,7 +29,6 @@ def previous_month(year: int, month: int) -> tuple[int, int]:
 
 
 def previous_month_same_elapsed_slice(frame: pd.DataFrame, year: int, month: int, elapsed_day: int) -> pd.DataFrame:
-    """Previous calendar month through the same day number, capped to its last day."""
     py, pm = previous_month(year, month)
     end_day = min(max(int(elapsed_day), 1), calendar.monthrange(py, pm)[1])
     work = posted_only(frame)
@@ -107,10 +106,59 @@ def elapsed_month_count(year: int) -> int:
 
 
 def average_monthly_expense(annual: pd.DataFrame, year: int) -> float | None:
-    months = elapsed_month_count(year)
-    if months <= 0:
+    """Average only completed months for the current year.
+
+    Treating the first day of a new month as a full month noticeably depresses
+    YTD averages. Closed years still divide by all 12 months, including zeros.
+    January is the only exception: until a full month exists, show Jan-to-date.
+    """
+    now = now_my()
+    if int(year) < now.year:
+        return float(annual["支出"].sum()) / 12
+    if int(year) > now.year:
         return None
-    return float(annual.loc[annual["month"] <= months, "支出"].sum()) / months
+    completed = now.month - 1
+    if completed > 0:
+        return float(annual.loc[annual["month"] <= completed, "支出"].sum()) / completed
+    return float(annual.loc[annual["month"] == 1, "支出"].sum())
+
+
+def historical_month_end_forecast(frame: pd.DataFrame, year: int, month: int, elapsed_day: int, lookback: int = 6) -> dict[str, float | int | str]:
+    """Forecast the current month from historical *remaining-day* spending.
+
+    This avoids the classic month-start error where rent/car-loan paid on day 1
+    is multiplied by 30. We keep actual spending to date and add the average
+    amount historically spent after the same day number in recent months.
+    """
+    current = month_slice(frame, year, month)
+    _, current_expense, _ = calculate_totals(current)
+    days_in_current = calendar.monthrange(year, month)[1]
+    elapsed = min(max(int(elapsed_day), 1), days_in_current)
+    if elapsed >= days_in_current:
+        return {"forecast": round(current_expense, 2), "history_months": 0, "method": "actual"}
+
+    work = posted_only(frame)
+    samples: list[float] = []
+    anchor = pd.Timestamp(year=year, month=month, day=1)
+    for offset in range(1, lookback + 1):
+        period = (anchor - pd.DateOffset(months=offset)).to_period("M")
+        py, pm = period.year, period.month
+        whole = month_slice(work, py, pm)
+        if whole.empty:
+            continue
+        cutoff = min(elapsed, calendar.monthrange(py, pm)[1])
+        remaining = whole[whole["date"].dt.day > cutoff].copy()
+        _, remaining_expense, _ = calculate_totals(remaining)
+        samples.append(float(remaining_expense))
+
+    if not samples:
+        return {"forecast": round(current_expense, 2), "history_months": 0, "method": "actual_to_date"}
+    expected_remaining = float(np.mean(samples))
+    return {
+        "forecast": round(max(0.0, current_expense + expected_remaining), 2),
+        "history_months": len(samples),
+        "method": "historical_remaining",
+    }
 
 
 def annual_savings_rate(annual: pd.DataFrame) -> float | None:
@@ -126,11 +174,13 @@ def recent_months_summary(frame: pd.DataFrame, periods: int = 12) -> pd.DataFram
     effects = expense_effect_frame(frame)
     if effects.empty:
         base["支出"] = 0.0
-        return base
-    effects["period"] = effects["date"].dt.to_period("M")
-    grouped = effects.groupby("period")["expense_effect"].sum().reset_index(name="支出")
-    base = base.merge(grouped, on="period", how="left")
-    base["支出"] = base["支出"].fillna(0.0)
+    else:
+        effects["period"] = effects["date"].dt.to_period("M")
+        grouped = effects.groupby("period")["expense_effect"].sum().reset_index(name="支出")
+        base = base.merge(grouped, on="period", how="left")
+        base["支出"] = base["支出"].fillna(0.0)
+    base["是否当月未完整"] = base["period"] == now_period
+    base["显示月份"] = base.apply(lambda row: row["月份"] + ("*" if row["是否当月未完整"] else ""), axis=1)
     return base
 
 
