@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -17,6 +17,52 @@ class ReceiptCandidate:
     force_duplicate: bool
     duplicate: bool
     status: str
+
+
+def _positive_money(value: Any) -> float:
+    parsed = pd.to_numeric(value, errors="coerce")
+    return 0.0 if pd.isna(parsed) else round(max(float(parsed), 0.0), 2)
+
+
+def materialize_receipt_adjustments(
+    transactions: Iterable[dict[str, Any]],
+    *,
+    tax: float = 0.0,
+    service_charge: float = 0.0,
+    discount: float = 0.0,
+    fallback_category: str = "其他",
+) -> list[dict[str, Any]]:
+    """Turn receipt metadata into visible/editable ledger rows.
+
+    Receipt reconciliation is not enough by itself: charges that contribute to
+    the paid total must also be saved. These generated rows are deliberately
+    visible in the editor so the user can change their date/category, uncheck
+    them, or correct an OCR mistake before saving.
+    """
+    rows = [dict(row) for row in transactions]
+    if not rows:
+        return rows
+
+    first_date = next((row.get("date") for row in rows if row.get("date")), None)
+    categories = [str(row.get("category") or "").strip() for row in rows if str(row.get("category") or "").strip()]
+    category = pd.Series(categories).mode().iloc[0] if categories else fallback_category
+
+    def add(item: str, tx_type: str, amount: float, note: str) -> None:
+        if amount <= RECEIPT_TOTAL_TOLERANCE:
+            return
+        rows.append({
+            "date": first_date,
+            "item": item,
+            "category": category,
+            "type": tx_type,
+            "amount": amount,
+            "note": note,
+        })
+
+    add("收据税费", EXPENSE, _positive_money(tax), "由收据税费自动加入，可在保存前修改")
+    add("收据服务费", EXPENSE, _positive_money(service_charge), "由收据服务费自动加入，可在保存前修改")
+    add("收据折扣", REFUND, _positive_money(discount), "由收据折扣自动加入，可在保存前修改")
+    return rows
 
 
 def evaluate_receipt_candidates(edited: pd.DataFrame, existing_keys: set[tuple]) -> tuple[list[str], list[ReceiptCandidate]]:
