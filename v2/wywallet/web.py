@@ -16,6 +16,7 @@ from .ai import (
     authoritative_summary_markdown,
     categorize_macro,
     execute_finance_plan,
+    finance_list_frame,
     plan_finance_question,
     state_from_plan,
 )
@@ -210,12 +211,13 @@ def repair_invalid_dialog(raw_row: dict) -> None:
     parsed_date = pd.to_datetime(raw_row.get("date"), errors="coerce")
     default_date = today_my() if pd.isna(parsed_date) or parsed_date.date() > today_my() else parsed_date.date()
     parsed_amount = pd.to_numeric(raw_row.get("amount"), errors="coerce")
-    default_amount = float(parsed_amount) if not pd.isna(parsed_amount) and float(parsed_amount) > 0 else 0.01
+    default_amount = abs(float(parsed_amount)) if not pd.isna(parsed_amount) and float(parsed_amount) != 0 else 0.01
     st.caption(f"当前问题：{raw_row.get('issues', '')}")
     c1, c2 = st.columns(2)
     tx_date = c1.date_input("日期", value=default_date, max_value=today_my(), key=f"repair_date_{tx_id}")
     raw_type = str(raw_row.get("type") or "")
-    tx_type = c2.selectbox("类型", TRANSACTION_TYPES, index=TRANSACTION_TYPES.index(raw_type) if raw_type in TRANSACTION_TYPES else 0, format_func=lambda v: TYPE_LABELS[v], key=f"repair_type_{tx_id}")
+    default_type = REFUND if raw_type == EXPENSE and not pd.isna(parsed_amount) and float(parsed_amount) < 0 else (raw_type if raw_type in TRANSACTION_TYPES else EXPENSE)
+    tx_type = c2.selectbox("类型", TRANSACTION_TYPES, index=TRANSACTION_TYPES.index(default_type), format_func=lambda v: TYPE_LABELS[v], key=f"repair_type_{tx_id}")
     item = st.text_input("项目／商家", value=str(raw_row.get("item") or ""), key=f"repair_item_{tx_id}")
     category = st.text_input("类别", value=str(raw_row.get("category") or ""), key=f"repair_cat_{tx_id}")
     amount = st.number_input("金额", min_value=0.01, step=0.01, value=default_amount, key=f"repair_amount_{tx_id}")
@@ -273,20 +275,19 @@ def _render_static_transaction_table(filtered: pd.DataFrame, categories: list[st
 
 
 def _dashboard(transactions: pd.DataFrame) -> None:
-    page_header("财务总览", "净支出会自动扣除退款；所有金额均只统计已发生日期。")
+    page_header("财务总览", "净支出会自动扣除退款；本月变化与上月相同已过天数比较。")
     now = now_my()
     current = analytics.month_slice(transactions, now.year, now.month)
-    py, pm = analytics.previous_month(now.year, now.month)
-    previous = analytics.month_slice(transactions, py, pm)
+    previous_same_period = analytics.previous_month_same_elapsed_slice(transactions, now.year, now.month, now.day)
     income, expense, balance = analytics.calculate_totals(current)
-    _, prior_expense, _ = analytics.calculate_totals(previous)
+    _, prior_expense, _ = analytics.calculate_totals(previous_same_period)
     flows = analytics.calculate_flow_totals(current)
     change = None if prior_expense == 0 else (expense - prior_expense) / abs(prior_expense)
     days = calendar.monthrange(now.year, now.month)[1]
     projected = expense / max(now.day, 1) * days
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("本月收入", money(income))
-    m2.metric("本月净支出", money(expense), "无上月数据" if change is None else f"{change:+.1%} 对比上月", delta_color="inverse")
+    m2.metric("本月净支出", money(expense), "无上月同期数据" if change is None else f"{change:+.1%} 对比上月同期", delta_color="inverse")
     m3.metric("本月结余", money(balance))
     m4.metric("本月退款", money(flows["refund"]))
     m5.metric("月底预计净支出", money(projected), "按当前速度", delta_color="off")
@@ -304,7 +305,7 @@ def _dashboard(transactions: pd.DataFrame) -> None:
         if positive.empty:
             empty_state("本月暂无净支出")
         else:
-            denominator = float(positive["amount"].sum()) or 1.0
+            denominator = float(summary.loc[summary["amount"] > 0, "amount"].sum()) or 1.0
             for _, row in positive.iterrows():
                 label, val = st.columns([1.6, 1])
                 label.write(f"**{row['category']}**")
@@ -377,7 +378,7 @@ def _transactions_page(transactions: pd.DataFrame, categories: list[str]) -> Non
 
 
 def _reports_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
-    page_header("分析报表", "退款会抵减对应类别支出；区块按需加载，不再一次计算所有报表。")
+    page_header("分析报表", "退款会抵减对应类别支出；当前年度只显示截至今天已发生的月份和数据。")
     if transactions.empty:
         empty_state("暂无有效数据可分析"); return
     years = sorted(transactions["date"].dt.year.unique().tolist(), reverse=True)
@@ -385,21 +386,23 @@ def _reports_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> Non
     year = int(st.selectbox("分析年份", years, index=years.index(now.year) if now.year in years else 0))
     annual = analytics.monthly_summary(transactions, year)
     year_all = transactions[transactions["date"].dt.year == year].copy()
-    annual_expense = float(annual["支出"].sum())
-    annual_income = float(annual["收入"].sum())
-    annual_refund = float(annual["退款"].sum())
+    elapsed = analytics.elapsed_month_count(year)
+    display_annual = annual[annual["month"] <= elapsed].copy() if year == now.year else annual.copy()
+    annual_expense = float(display_annual["支出"].sum())
+    annual_income = float(display_annual["收入"].sum())
+    annual_refund = float(display_annual["退款"].sum())
     monthly_avg = analytics.average_monthly_expense(annual, year)
     savings = analytics.annual_savings_rate(annual)
     yoy = analytics.same_period_yoy(transactions, year)
-    elapsed = analytics.elapsed_month_count(year)
-    scope = annual[annual["month"] <= elapsed] if elapsed else annual.iloc[0:0]
-    highest = scope.loc[scope["支出"].idxmax()] if not scope.empty else None
-    avg_label = "截至目前月均" if year == now.year else "全年月均"
+    highest = display_annual.loc[display_annual["支出"].idxmax()] if not display_annual.empty else None
+    current_year = year == now.year
+    avg_label = "截至目前月均" if current_year else "全年月均"
+    prefix = "截至目前" if current_year else "年度"
     yoy_text = "无同期数据" if not yoy or yoy["change"] is None else f"{yoy['change']:+.1%} 同期同比"
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("年度净支出", money(annual_expense), yoy_text, delta_color="inverse")
-    m2.metric("年度收入", money(annual_income))
-    m3.metric("年度退款", money(annual_refund))
+    m1.metric(f"{prefix}净支出", money(annual_expense), yoy_text, delta_color="inverse")
+    m2.metric(f"{prefix}收入", money(annual_income))
+    m3.metric(f"{prefix}退款", money(annual_refund))
     m4.metric(avg_label, "N/A" if monthly_avg is None else money(monthly_avg))
     m5.metric("储蓄率", "N/A" if savings is None else f"{savings:.1f}%")
     if highest is not None:
@@ -412,7 +415,7 @@ def _reports_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> Non
         l, r = st.columns([1.55, 1], gap="large")
         with l:
             section_title("每月净支出")
-            fig = px.bar(annual, x="月份", y="支出", text_auto=".0f")
+            fig = px.bar(display_annual, x="月份", y="支出", text_auto=".0f")
             if monthly_avg is not None:
                 fig.add_hline(y=monthly_avg, line_dash="dash", annotation_text=f"月均 {money(monthly_avg)}")
             fig.update_yaxes(tickprefix="RM ")
@@ -428,27 +431,31 @@ def _reports_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> Non
                 render_chart(fig, height=390, legend=True, hovermode="closest")
     elif section == "年度趋势":
         section_title("收入、净支出与结余")
-        cash = annual.melt(id_vars=["month", "月份"], value_vars=["收入", "支出", "结余"], var_name="指标", value_name="金额")
+        cash = display_annual.melt(id_vars=["month", "月份"], value_vars=["收入", "支出", "结余"], var_name="指标", value_name="金额")
         fig = px.line(cash, x="月份", y="金额", color="指标", markers=True)
         fig.update_yaxes(tickprefix="RM ")
         render_chart(fig, height=390, legend=True)
         prior = analytics.monthly_summary(transactions, year - 1)
-        compare = annual[["月份", "累计支出"]].rename(columns={"累计支出": str(year)}).copy()
-        compare[str(year - 1)] = prior["累计支出"].values
+        if current_year:
+            prior = prior[prior["month"] <= elapsed].copy()
+        compare = display_annual[["月份", "累计支出"]].rename(columns={"累计支出": str(year)}).copy()
+        compare[str(year - 1)] = prior["累计支出"].values[:len(compare)]
         melt = compare.melt(id_vars="月份", var_name="年份", value_name="累计净支出")
         fig = px.line(melt, x="月份", y="累计净支出", color="年份", markers=True)
         fig.update_yaxes(tickprefix="RM ")
         render_chart(fig, height=350, legend=True)
     elif section == "月度明细":
-        month = int(st.selectbox("选择月份", range(1, 13), index=min(now.month - 1, 11), format_func=lambda v: f"{v}月", key="report_month"))
+        month_options = list(range(1, now.month + 1)) if current_year else list(range(1, 13))
+        default_month_index = len(month_options) - 1 if current_year else min(now.month - 1, 11)
+        month = int(st.selectbox("选择月份", month_options, index=default_month_index, format_func=lambda v: f"{v}月", key="report_month"))
         selected = analytics.month_slice(transactions, year, month)
         mi, me, mb = analytics.calculate_totals(selected)
         flows = analytics.calculate_flow_totals(selected)
-        current_month = year == now.year and month == now.month
+        is_current_month = current_year and month == now.month
         days = calendar.monthrange(year, month)[1]
-        projected = me / max(now.day, 1) * days if current_month else None
+        projected = me / max(now.day, 1) * days if is_current_month else None
         a, b, c, d, e = st.columns(5)
-        a.metric("收入", money(mi)); b.metric("净支出", money(me)); c.metric("退款", money(flows["refund"])); d.metric("结余", money(mb)); e.metric("月底预计", "N/A" if projected is None else money(projected))
+        a.metric("收入", money(mi)); b.metric("净支出", money(me)); c.metric("退款", money(flows["refund"])); d.metric("结余", money(mb)); e.metric("月底预计" if is_current_month else "实际净支出", money(projected if is_current_month else me), "按当前速度" if is_current_month else "实际", delta_color="off")
         effects = analytics.expense_effect_frame(selected)
         if effects.empty:
             st.info("该月没有支出或退款。")
@@ -499,17 +506,20 @@ def _reports_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> Non
 def _render_ai_list_from_plan(plan_dict: dict, transactions: pd.DataFrame) -> None:
     try:
         plan = FinanceQueryPlan.model_validate(plan_dict)
-        result = execute_finance_plan(plan, transactions)
+        df = finance_list_frame(plan, transactions)
     except Exception:
-        st.session_state.pop("ai_last_list_plan", None); return
-    rows = result.get("ui_transactions") or []
+        st.session_state.pop("ai_last_list_plan", None)
+        return
     section_title("完整本地查询结果")
-    st.caption("只在当前页面按查询条件重新计算，不把整份列表永久存进 session。")
-    if not rows:
+    st.caption("列表按查询条件本地分页；只保存查询计划，不把整份结果永久塞进 Session。")
+    if df.empty:
         st.info("没有匹配记录。"); return
-    df = pd.DataFrame(rows)
     _, start, end = _page_selector("ai_list_page", len(df), 100)
-    st.dataframe(df.iloc[start:end], hide_index=True, use_container_width=True, height=520, column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")})
+    show = df.iloc[start:end][["date", "item", "category", "type", "amount", "note"]].copy()
+    show["date"] = show["date"].dt.strftime("%Y-%m-%d")
+    show["type"] = show["type"].map(TYPE_LABELS)
+    st.dataframe(show, hide_index=True, use_container_width=True, height=520, column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")})
+    st.caption(f"共 {len(df):,} 笔；当前显示第 {start + 1:,}–{end:,} 笔。")
 
 
 def _ai_page(transactions: pd.DataFrame) -> None:
@@ -542,13 +552,14 @@ def _ai_page(transactions: pd.DataFrame) -> None:
         fig = px.bar(macro, x="amount", y="宏观类别", orientation="h", labels={"amount": "支出 (RM)", "宏观类别": ""}); fig.update_xaxes(tickprefix="RM ")
         render_chart(fig, height=420)
     st.divider(); section_title("与账单对话")
-    st.caption("每次提问前会绕过 UI 缓存重新读取最新账本；本地精确结果永远先于 AI 解释显示。")
+    st.caption("每次提问前都会绕过 UI 缓存重新读取最新账本；本地精确结果永远先于 AI 解释。")
     history = st.session_state.setdefault("ai_chat_history", [])
     for message in history:
         with st.chat_message(message["role"]): st.markdown(message["content"])
     question = st.chat_input("例如：8月打油多少钱？有几笔支出？跟上个月比？退款多少？")
     if question:
         try:
+            should_rerun_for_list = False
             with st.chat_message("assistant"):
                 with st.spinner("正在读取最新账本并本地计算..."):
                     fresh, _, truncated = fetch_transactions_interactive_fresh()
@@ -568,8 +579,12 @@ def _ai_page(transactions: pd.DataFrame) -> None:
             st.session_state["ai_data_signature"] = ledger_signature(fresh)
             if plan.intent == "list":
                 st.session_state["ai_last_list_plan"] = plan.model_dump()
+                refresh_data()
+                should_rerun_for_list = True
             else:
                 st.session_state.pop("ai_last_list_plan", None)
+            if should_rerun_for_list:
+                st.rerun()
         except Exception as exc:
             st.error(f"AI 查询失败：{exc}")
     if st.session_state.get("ai_last_list_plan"):
