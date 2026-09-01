@@ -13,7 +13,9 @@ CHART_COLORS = [
     "#9661BC", "#F6903D", "#E8684A", "#6DC8EC", "#9270CA",
 ]
 SEMANTIC_COLORS = {
-    "收入": "#35B77E", "Income": "#35B77E", "支出": "#EF6464", "Expense": "#EF6464",
+    "收入": "#35B77E", "Income": "#35B77E",
+    "支出": "#EF6464", "Expense": "#EF6464",
+    "退款": "#36A2AE", "Refund": "#36A2AE",
     "结余": "#F6BD16", "Balance": "#F6BD16",
 }
 LOCKED_CHART_CONFIG = {
@@ -23,7 +25,7 @@ LOCKED_CHART_CONFIG = {
 
 CSS = """
 <style>
-:root{--wy-primary:#5b8ff9;--wy-positive:#35b77e;--wy-negative:#ef6464;--wy-warning:#f6bd16;--wy-border:rgba(128,128,128,.24);--wy-muted:rgba(160,166,180,.82)}
+:root{--wy-primary:#5b8ff9;--wy-positive:#35b77e;--wy-negative:#ef6464;--wy-refund:#36a2ae;--wy-warning:#f6bd16;--wy-border:rgba(128,128,128,.24);--wy-muted:rgba(160,166,180,.82)}
 [data-testid="stAppViewContainer"]>.main .block-container{max-width:1280px;padding-top:1.15rem;padding-bottom:3rem}
 [data-testid="stSidebar"]{border-right:1px solid var(--wy-border)}
 .wy-brand{padding:.35rem 0 1rem}.wy-brand-title{font-size:1.45rem;font-weight:800;line-height:1.2}.wy-muted,.wy-brand-subtitle{color:var(--wy-muted);font-size:.88rem}
@@ -63,10 +65,10 @@ def empty_state(text: str) -> None:
     st.markdown(f'<div class="wy-empty">{html.escape(text)}</div>', unsafe_allow_html=True)
 
 
-def safe_detail_html(item: str, category: str, type_label: str, amount: float, tx_date: str, note: str, income: bool) -> str:
+def safe_detail_html(item: str, category: str, type_label: str, amount: float, tx_date: str, note: str, positive: bool) -> str:
     item_e, category_e, type_e, date_e, note_e = map(lambda x: html.escape(str(x)), [item, category, type_label, tx_date, note or ""])
-    amount_class = "wy-amount-income" if income else "wy-amount-expense"
-    sign = "+" if income else "−"
+    amount_class = "wy-amount-income" if positive else "wy-amount-expense"
+    sign = "+" if positive else "−"
     note_suffix = f" · {note_e}" if note_e else ""
     return (
         f'<div class="wy-detail"><span class="wy-chip">{type_e}</span> <span class="wy-chip">{category_e}</span>'
