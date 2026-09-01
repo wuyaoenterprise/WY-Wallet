@@ -6,14 +6,14 @@ from typing import Any, Iterable
 import pandas as pd
 
 from .config import EXPENSE, INCOME, RECEIPT_TOTAL_TOLERANCE, REFUND
-from .db import normalize_transaction, transaction_key
+from .db import normalize_transaction
 
 
 @dataclass
 class ReceiptCandidate:
     row_index: int
     normalized: dict[str, Any]
-    key: tuple[str, str, str, str, float]
+    key: tuple[str, str, str, float]
     force_duplicate: bool
     duplicate: bool
     status: str
@@ -22,6 +22,34 @@ class ReceiptCandidate:
 def _positive_money(value: Any) -> float:
     parsed = pd.to_numeric(value, errors="coerce")
     return 0.0 if pd.isna(parsed) else round(max(float(parsed), 0.0), 2)
+
+
+def _duplicate_key(normalized: dict[str, Any]) -> tuple[str, str, str, float]:
+    """Receipt duplicate identity intentionally ignores category.
+
+    Category is an AI/user classification and can legitimately differ between
+    two otherwise identical representations of the same receipt line. Using it
+    as part of duplicate identity allows the same transaction to slip through
+    merely because it was classified differently.
+    """
+    return (
+        str(normalized["date"]),
+        str(normalized["item"]).strip().casefold(),
+        str(normalized["type"]),
+        round(float(normalized["amount"]), 2),
+    )
+
+
+def _coerce_existing_duplicate_keys(existing_keys: set[tuple]) -> set[tuple[str, str, str, float]]:
+    result: set[tuple[str, str, str, float]] = set()
+    for key in existing_keys:
+        if len(key) == 5:
+            # Legacy db.transaction_key shape:
+            # date, item, category, type, amount
+            result.add((str(key[0]), str(key[1]).casefold(), str(key[3]), round(float(key[4]), 2)))
+        elif len(key) == 4:
+            result.add((str(key[0]), str(key[1]).casefold(), str(key[2]), round(float(key[3]), 2)))
+    return result
 
 
 def materialize_receipt_adjustments(
@@ -68,7 +96,8 @@ def materialize_receipt_adjustments(
 def evaluate_receipt_candidates(edited: pd.DataFrame, existing_keys: set[tuple]) -> tuple[list[str], list[ReceiptCandidate]]:
     statuses: list[str] = []
     candidates: list[ReceiptCandidate] = []
-    seen: set[tuple] = set()
+    existing_duplicate_keys = _coerce_existing_duplicate_keys(existing_keys)
+    seen: set[tuple[str, str, str, float]] = set()
     for row_index, row in edited.iterrows():
         if not bool(row.get("保存")):
             statuses.append("未选择")
@@ -78,11 +107,11 @@ def evaluate_receipt_candidates(edited: pd.DataFrame, existing_keys: set[tuple])
             continue
         try:
             normalized = normalize_transaction(row.to_dict())
-            key = transaction_key(normalized)
+            key = _duplicate_key(normalized)
         except Exception as exc:
             statuses.append(f"无效：{exc}")
             continue
-        duplicate = key in existing_keys or key in seen
+        duplicate = key in existing_duplicate_keys or key in seen
         force = bool(row.get("仍然保存重复"))
         if duplicate and not force:
             statuses.append("疑似重复（未保存）")
@@ -98,9 +127,10 @@ def evaluate_receipt_candidates(edited: pd.DataFrame, existing_keys: set[tuple])
 def finalize_receipt_candidates(candidates: list[ReceiptCandidate], fresh_existing_keys: set[tuple]) -> tuple[list[dict], int]:
     final_rows: list[dict] = []
     skipped = 0
-    seen: set[tuple] = set()
+    fresh_duplicate_keys = _coerce_existing_duplicate_keys(fresh_existing_keys)
+    seen: set[tuple[str, str, str, float]] = set()
     for candidate in candidates:
-        duplicate_now = candidate.key in fresh_existing_keys or candidate.key in seen
+        duplicate_now = candidate.key in fresh_duplicate_keys or candidate.key in seen
         if duplicate_now and not candidate.force_duplicate:
             skipped += 1
             continue
