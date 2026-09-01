@@ -97,4 +97,4 @@ GitHub Actions runs on both pull requests and pushes to `agent/wy-wallet-v3`, va
 
 ## Remaining external verification
 
-The application layer is fail-closed, but the legacy Web Supabase project's actual RLS policies, anon-key permissions and database constraints cannot be verified from this repository alone. Those must be reviewed in the Supabase project itself before treating the database layer as independently hardened.
+The application-layer issues identified in the V3.1 audit are addressed in V3.1.1. The one remaining external boundary is the legacy Web Supabase project's own security configuration: its RLS policies, anon-key permissions, database constraints and indexes cannot be verified or changed from this repository because that Supabase project is not connected to the available management tooling. Review those settings in the Supabase project before treating the database layer as independently hardened.
