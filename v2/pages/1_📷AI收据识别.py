@@ -19,7 +19,7 @@ from PIL import Image
 from supabase import create_client
 
 
-MODEL_ID = "gemini-3.6-flash"
+MODEL_ID = "gemini-3.7-flash"
 EXPENSE = "Expense"
 INCOME = "Income"
 DEFAULT_CATEGORIES = ["饮食", "交通", "购物", "居住", "娱乐", "医疗", "教育", "投资", "旅游", "其他"]
@@ -285,7 +285,7 @@ with action_col:
         "补充说明（可选）",
         placeholder="例如：这是退款单；只识别商品，不要识别会员积分；日期实际是昨天。",
     )
-    recognize = st.button("✨ 使用 Gemini 3.6 Flash 识别", type="primary", use_container_width=True)
+    recognize = st.button("✨ 使用 Gemini 3.7 Flash 识别", type="primary", use_container_width=True)
     clear = st.button("清除识别结果", use_container_width=True)
 
 if clear:
