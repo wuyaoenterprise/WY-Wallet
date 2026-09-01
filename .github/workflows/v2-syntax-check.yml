@@ -32,19 +32,20 @@ jobs:
           python -m pip check
       - name: Compile all V2 Python files
         run: python -m compileall -q v2
-      - name: Reject legacy runtime patching and Gemini SDK
+      - name: Reject legacy or deprecated runtime paths
         run: |
           ! grep -R "google.generativeai" v2 --include='*.py'
           ! grep -R "exec(compile" v2 --include='*.py'
           ! grep -R "source.replace" v2 --include='*.py'
           ! grep -R "selection_mode=\"single-row\"" v2/wywallet/web.py
+          ! grep -R "use_container_width" v2 --include='*.py'
           grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v2/wywallet/config.py
           grep -q 'showSidebarNavigation = false' .streamlit/config.toml
-      - name: Run core regression tests
+      - name: Run regression and Streamlit AppTest suite
         env:
           PYTHONPATH: v2
         run: pytest -q v2/tests
       - name: Import application modules
         env:
           PYTHONPATH: v2
-        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui, wywallet.receipt"
+        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui, wywallet.receipt, wywallet.exporting"
