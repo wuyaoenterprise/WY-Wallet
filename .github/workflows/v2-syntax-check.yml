@@ -5,6 +5,7 @@ on:
     paths:
       - "v2/**/*.py"
       - "v2/requirements.txt"
+      - ".streamlit/config.toml"
       - ".github/workflows/v2-syntax-check.yml"
   workflow_dispatch:
 
@@ -28,6 +29,7 @@ jobs:
         run: |
           python -m pip install -r v2/requirements.txt
           python -m pip install pytest
+          python -m pip check
       - name: Compile all V2 Python files
         run: python -m compileall -q v2
       - name: Reject legacy runtime patching and Gemini SDK
@@ -35,11 +37,14 @@ jobs:
           ! grep -R "google.generativeai" v2 --include='*.py'
           ! grep -R "exec(compile" v2 --include='*.py'
           ! grep -R "source.replace" v2 --include='*.py'
-      - name: Run core tests
+          ! grep -R "selection_mode=\"single-row\"" v2/wywallet/web.py
+          grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v2/wywallet/config.py
+          grep -q 'showSidebarNavigation = false' .streamlit/config.toml
+      - name: Run core regression tests
         env:
           PYTHONPATH: v2
         run: pytest -q v2/tests
       - name: Import application modules
         env:
           PYTHONPATH: v2
-        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui"
+        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui, wywallet.receipt"
