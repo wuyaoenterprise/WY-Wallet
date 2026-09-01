@@ -4,8 +4,8 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 APP_TITLE = "WY Wallet V3"
-APP_VERSION = "2026.09.01-v3.0.1"
-BUILD_ID = "v3-branding-r1"
+APP_VERSION = "2026.09.01-v3.0.2"
+BUILD_ID = "v3-performance-fragments-r1"
 TIMEZONE_NAME = "Asia/Kuala_Lumpur"
 TIMEZONE = ZoneInfo(TIMEZONE_NAME)
 CURRENCY = "MYR"
@@ -24,7 +24,11 @@ MAX_TRANSACTION_ROWS = 100_000
 AI_RETRY_ATTEMPTS = 3
 AI_MACRO_BATCH_SIZE = 400
 RECEIPT_TOTAL_TOLERANCE = 0.05
-UI_CACHE_TTL_SECONDS = 30
+# Interactive reads are cached longer for responsive Streamlit reruns. Every
+# V3 write and the explicit Refresh action still invalidates the cache
+# immediately, so local edits remain instant while ordinary clicks avoid
+# repeated Supabase pagination round-trips.
+UI_CACHE_TTL_SECONDS = 300
 
 
 def now_my() -> datetime:
