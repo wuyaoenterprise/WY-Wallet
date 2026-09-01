@@ -149,6 +149,27 @@ def test_metric_and_time_inherit_are_application_enforced(monkeypatch):
     assert plan.date_to == "2025-08-31"
 
 
+def test_comparison_target_does_not_replace_prior_primary_range(monkeypatch):
+    # Simulate a model trying to make July the new primary range for
+    # "跟上个月比". Application logic must keep August primary and compare July.
+    proposed = FinanceQueryPlan(
+        intent="compare", subject_mode="inherit", metric_mode="inherit", time_mode="specific",
+        date_from="2026-07-01", date_to="2026-07-31", comparison="previous_period",
+    )
+    monkeypatch.setattr(ai, "_generate_content_with_retry", lambda **kwargs: SimpleNamespace(parsed=proposed, text=""))
+    df = frame([
+        {"date": "2026-07-01", "item": "打油", "category": "交通", "type": EXPENSE, "amount": 100},
+        {"date": "2026-08-01", "item": "打油", "category": "交通", "type": EXPENSE, "amount": 150},
+    ])
+    state = {"subject": "打油", "matched_items": ["打油"], "matched_categories": [], "metric": "expense", "date_from": "2026-08-01", "date_to": "2026-08-31"}
+    plan = ai.plan_finance_question("跟上个月比呢？", 2026, df, state, [])
+    assert plan.date_from == "2026-08-01"
+    assert plan.date_to == "2026-08-31"
+    result = execute_finance_plan(plan, df)
+    assert result["authoritative_total"] == pytest.approx(150)
+    assert result["comparison"]["value"] == pytest.approx(100)
+
+
 def test_list_result_is_not_limited_to_120_rows():
     rows = [{"date": f"2026-08-{(i%28)+1:02d}", "item": "Grab", "category": "交通", "type": EXPENSE, "amount": 10+i/100, "id": i+1} for i in range(180)]
     plan = FinanceQueryPlan(intent="list", subject_mode="specific", subject="Grab", metric_mode="specific", metric="expense", time_mode="specific", date_from="2026-08-01", date_to="2026-08-31", matched_items=["Grab"])
@@ -174,6 +195,15 @@ def test_default_categories_do_not_reappear_after_registered_categories_exist(mo
     result = db.load_categories(df)
     assert "购物" not in result
     assert "日常消费" in result
+
+
+def test_default_categories_still_bootstrap_when_category_table_is_empty(monkeypatch):
+    monkeypatch.setattr(db, "load_category_rows", lambda: [])
+    df = frame([{"date": "2026-08-01", "item": "Vet", "category": "宠物", "type": EXPENSE, "amount": 50}])
+    result = db.load_categories(df)
+    assert "饮食" in result
+    assert "其他" in result
+    assert "宠物" in result
 
 
 def test_receipt_duplicate_can_be_explicitly_forced():
