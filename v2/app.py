@@ -63,7 +63,7 @@ def _wy_topic_phrase(question: str) -> str:
         "哪个月", "哪個月", "哪月", "最高", "最低", "为什么", "為什麼",
         "怎么会", "怎麼會", "怎么", "怎麼", "这么高", "這麼高", "这么低", "這麼低",
         "是多少", "多少钱", "多少錢", "多少", "分别", "分別", "那麼", "那么",
-        "然后", "然後", "而已", "而已", "继续", "繼續", "再看看", "再看",
+        "然后", "然後", "而已", "继续", "繼續", "再看看", "再看",
     ]
     for phrase in generic_phrases:
         text = text.replace(phrase, " ")
@@ -184,7 +184,7 @@ def _enrich_finance_prompt(contents):
 pattern = r"def _enrich_finance_prompt\(contents\):.*?\n\n_original_generative_model"
 source, replaced = re.subn(
     pattern,
-    replacement + "\n\n_original_generative_model",
+    lambda _match: replacement + "\n\n_original_generative_model",
     source,
     count=1,
     flags=re.S,
