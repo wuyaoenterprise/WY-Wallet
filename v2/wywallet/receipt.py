@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from .config import EXPENSE, INCOME, RECEIPT_TOTAL_TOLERANCE
+from .config import EXPENSE, INCOME, RECEIPT_TOTAL_TOLERANCE, REFUND
 from .db import normalize_transaction, transaction_key
 
 
@@ -63,17 +63,35 @@ def finalize_receipt_candidates(candidates: list[ReceiptCandidate], fresh_existi
     return final_rows, skipped
 
 
-def reconcile_receipt_total(candidates: list[ReceiptCandidate], receipt_total: float | None) -> dict | None:
+def reconcile_receipt_total(
+    candidates: list[ReceiptCandidate],
+    receipt_total: float | None,
+    *,
+    tax: float = 0.0,
+    service_charge: float = 0.0,
+    discount: float = 0.0,
+) -> dict | None:
     if receipt_total is None:
         return None
     expense = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == EXPENSE)
+    refund = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == REFUND)
+    # Income is not expected from receipt extraction, but keep a defensive reversal
+    # if an older session contains one.
     income = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == INCOME)
-    net = round(expense - income, 2)
+    item_total = round(expense - refund - income, 2)
+    tax = round(max(float(tax or 0), 0.0), 2)
+    service_charge = round(max(float(service_charge or 0), 0.0), 2)
+    discount = round(max(float(discount or 0), 0.0), 2)
+    expected_total = round(item_total + tax + service_charge - discount, 2)
     receipt = round(float(receipt_total), 2)
-    difference = round(net - receipt, 2)
+    difference = round(expected_total - receipt, 2)
     return {
         "receipt_total": receipt,
-        "selected_net_total": net,
+        "item_total": item_total,
+        "tax": tax,
+        "service_charge": service_charge,
+        "discount": discount,
+        "expected_total": expected_total,
         "difference": difference,
         "matches": abs(difference) <= RECEIPT_TOTAL_TOLERANCE,
         "tolerance": RECEIPT_TOTAL_TOLERANCE,
