@@ -37,63 +37,33 @@ Only use this override when the hosting platform already prevents unauthorized u
 
 If neither option is configured, V3 intentionally stops at a security-setup screen instead of exposing the ledger.
 
-## V3.1.1 accounting and reliability behavior
+## V3.1.1 final audit fixes
+
+- Fragment pages reload the shared ledger snapshot internally, avoiding parent-run stale DataFrames while preserving fast local reruns.
+- Current-year AI `average_month` excludes an incomplete current month when completed months exist, matching the report definition.
+- Largest/smallest transaction queries return the concrete transaction date, item and category.
+- Highest/lowest month output respects aggregation units, so count queries display `笔` rather than `RM`.
+- Custom comparison targets persist in conversation state for follow-up questions such as `差多少百分比？`.
+- Gemini planning no longer receives thousands of ledger merchant/item candidate names on every question; exact subject matching happens locally.
+- Simple amount/count/list questions skip the second Gemini explanation call unless an explanation is actually needed.
+- Receipt adjustment fingerprints are based on extracted receipt contents rather than image bytes, reducing duplicate tax/service/discount rows when the same physical receipt is photographed again.
+- If the final fresh duplicate check changes the rows that would be saved, V3 saves nothing and requires reconciliation/confirmation again instead of silently saving a partial receipt.
+- Negative net-expense categories are surfaced as net-refund reconciliation rows rather than disappearing from positive-only quick charts.
+- Prepared backup bundles carry a ledger signature and are invalidated before a later download rerun if another session changed the ledger.
+- Category-merge rollback only changes rows that are still at the merge target, reducing the chance of overwriting a newer concurrent category edit.
+- Password sessions expire after 30 minutes of inactivity and users can manually lock the current session.
+- CI runs on both pull requests and pushes to the V3 branch, on Python 3.12 and 3.14, and includes V3-specific override regressions.
+
+## Existing V3 accounting behavior
 
 - Refunds are logical `Refund` transactions and reduce net spending instead of inflating income inside V3.
 - Shared-table refund storage uses a positive-amount marker representation, so V3 does not depend on the web Supabase schema allowing negative amounts. Older negative-expense refunds remain readable.
 - Future dates are excluded from posted-ledger analytics.
-- Transaction reads use ID keyset pagination, avoiding offset-pagination drift during long reads/backups.
-- V3 fragments reload the shared ledger snapshot internally instead of holding the parent run's DataFrame arguments.
-- All app writes invalidate the shared ledger cache and any same-session prepared backup snapshot; prepared backup bundles also carry a ledger signature so a later cross-session ledger change invalidates them before another download rerun.
-- Category merge verifies the move and attempts rollback if a partial move fails; rollback only touches rows that are still at the merge target so a newer concurrent category edit is not overwritten.
+- Transaction reads use ID keyset pagination.
 - Spreadsheet exports neutralize formula-like external text.
-
-## Forecasting and reports
-
-- Month-end forecast is history-aware: current actual spending plus the recent historical average of spending after the same day-of-month. It does not multiply month-start rent/car-loan payments by the number of days in the month.
-- Current-month bars are marked with `*` as incomplete.
-- Current-year monthly average uses completed months rather than treating the newly started month as complete.
-- Refunds reduce category, monthly and macro net spending.
-- Negative net-expense categories are surfaced as net-refund reconciliation rows instead of silently disappearing behind positive-only quick charts.
-
-## AI
-
-Gemini 3.7 Flash is used for language understanding, structured planning, receipt extraction and explanation. Authoritative finance values are calculated in local Python.
-
-Supported local aggregations include:
-
-- total amount
-- transaction count
-- average per transaction
-- average per calendar day
-- average per completed calendar month for an in-progress current-year range
-- median
-- largest single transaction, including its date/item/category
-- smallest single transaction, including its date/item/category
-
-Comparisons support previous month, previous equal-length period, previous-year same period, and an explicit custom comparison range such as `8月跟6月比`. The comparison target is persisted in conversation state for short follow-ups such as `差多少百分比？`.
-
-The planner no longer sends thousands of merchant/item candidate names for every question. Subject text is interpreted by Gemini and resolved against the ledger locally. Simple amount/count/list questions skip the second AI explanation call when no explanation is needed.
-
-## Receipt recognition
-
-- Gemini 3.7 structured extraction
-- image size guard
-- mandatory human date confirmation when unreadable
-- duplicate check before and immediately before save
-- user override for legitimate identical transactions
-- receipt-level tax/service/discount materialized as editable ledger rows
-- semantic receipt fingerprint based on extracted receipt contents rather than image bytes, reducing duplicate adjustment rows when the same physical receipt is photographed again
-- if the final fresh duplicate check changes the candidate set, V3 saves nothing and requires the user to rerun/reconfirm so the reconciled total always matches the rows actually inserted
-- local total reconciliation before saving
-
-## Performance
-
-V3 uses Streamlit fragments for page-local interactions and one shared ledger cache in the database layer. Fragment entrypoints reload the shared cache internally, preserving the faster interaction model without freezing a parent-run transaction DataFrame.
-
-## Validation
-
-GitHub Actions runs on both pull requests and pushes to `agent/wy-wallet-v3`, validates Python 3.12 and 3.14, and covers dependency checks, Python compilation, stale V2-branding guards, deprecated API guards, finance regressions, V3 override regressions, receipt regressions, access-gate AppTests, V3 entrypoint execution, and module smoke imports.
+- Month-end forecast is history-aware rather than linearly multiplying month-start fixed costs.
+- Current-month bars are marked as incomplete and current-year report averages use completed months.
+- Gemini 3.7 Flash handles language/structured extraction; authoritative finance values are calculated in Python.
 
 ## Remaining external verification
 
