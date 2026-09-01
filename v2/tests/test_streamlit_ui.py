@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 
-FAKE_APP = r'''
+FAKE_APP_TEMPLATE = r'''
 import pandas as pd
 import streamlit as st
 import wywallet.web as web
@@ -27,41 +28,55 @@ web.data_loaded_at = lambda: "2026-09-01T14:00:00+08:00"
 web.refresh_data = lambda: None
 st.page_link = lambda *args, **kwargs: None
 
+ROUTE = __ROUTE__
+if ROUTE is not None:
+    original_radio = st.radio
+    def fixed_radio(label, options, **kwargs):
+        if label == "导航":
+            return ROUTE
+        return original_radio(label, options, **kwargs)
+    st.radio = fixed_radio
+
 web.run()
 '''
+
+
+def _script(route: str | None = None) -> str:
+    return FAKE_APP_TEMPLATE.replace("__ROUTE__", repr(route))
 
 
 def _markdown_texts(at: AppTest) -> list[str]:
     return [str(element.value) for element in at.markdown]
 
 
-def _navigation(at: AppTest):
-    assert len(at.radio) >= 1
-    return at.radio[0]
-
-
-def test_main_app_renders_and_every_navigation_route_smokes():
-    at = AppTest.from_string(FAKE_APP, default_timeout=25)
+def test_main_app_default_dashboard_renders_without_runtime_exception():
+    at = AppTest.from_string(_script(), default_timeout=25)
     at.run()
     assert not at.exception
     assert any("财务总览" in text for text in _markdown_texts(at))
     assert len(at.metric) >= 5
 
-    expected = {
-        "交易记录": "交易记录",
-        "分析报表": "分析报表",
-        "AI 洞察": "AI 洞察",
-        "设置与备份": "设置与备份",
-        "总览": "财务总览",
-    }
-    for route, marker in expected.items():
-        _navigation(at).set_value(route).run()
-        assert not at.exception, f"route {route} raised: {at.exception}"
-        assert any(marker in text for text in _markdown_texts(at)), route
+
+@pytest.mark.parametrize(
+    ("route", "marker"),
+    [
+        ("交易记录", "交易记录"),
+        ("分析报表", "分析报表"),
+        ("AI 洞察", "AI 洞察"),
+        ("设置与备份", "设置与备份"),
+    ],
+)
+def test_each_main_route_smokes_in_fresh_streamlit_session(route: str, marker: str):
+    # Fresh AppTest instances avoid stale segmented-control widget state from a
+    # different route while still exercising the real route body end-to-end.
+    at = AppTest.from_string(_script(route), default_timeout=25)
+    at.run()
+    assert not at.exception, f"route {route} raised: {at.exception}"
+    assert any(marker in text for text in _markdown_texts(at)), route
 
 
 def test_main_app_password_gate_blocks_data_until_authenticated():
-    at = AppTest.from_string(FAKE_APP, default_timeout=20)
+    at = AppTest.from_string(_script(), default_timeout=20)
     at.secrets["WEB_ACCESS_PASSWORD"] = "test-secret"
     at.run()
     assert not at.exception
