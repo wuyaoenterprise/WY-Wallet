@@ -9,6 +9,16 @@ on:
       - "v3/requirements.txt"
       - ".streamlit/config.toml"
       - ".github/workflows/v2-syntax-check.yml"
+  push:
+    branches:
+      - "agent/wy-wallet-v3"
+    paths:
+      - "v2/**/*.py"
+      - "v3/**/*.py"
+      - "v2/requirements.txt"
+      - "v3/requirements.txt"
+      - ".streamlit/config.toml"
+      - ".github/workflows/v2-syntax-check.yml"
   workflow_dispatch:
 
 permissions:
@@ -34,7 +44,7 @@ jobs:
           python -m pip install -r v3/requirements.txt
           python -m pip install pytest
           python -m pip check
-      - name: Compile V2 shared core and V3 entry files
+      - name: Compile shared core and V3 entry files
         run: python -m compileall -q v2 v3
       - name: Reject legacy, stale-branding or deprecated runtime paths
         run: |
@@ -45,15 +55,17 @@ jobs:
           ! grep -R "use_container_width" v2 v3 --include='*.py'
           ! grep -R "个人财务中心 · V2" v2/wywallet/web.py v3 --include='*.py'
           ! grep -R "WY_Wallet_V2_" v2/wywallet/web.py v3 --include='*.py'
+          ! grep -q 'candidate_items' v3/v3_overrides.py
           grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v2/wywallet/config.py
           grep -q 'APP_TITLE = "WY Wallet V3"' v2/wywallet/config.py
           grep -q 'APP_VERSION = "2026.09.01-v3.1.0"' v2/wywallet/config.py
           grep -q 'showSidebarNavigation = false' .streamlit/config.toml
-      - name: Run regression, V3 entrypoint and Streamlit AppTest suite
+          grep -q 'apply_overrides()' v3/app.py
+      - name: Run regression, V3 override and Streamlit AppTest suites
         env:
-          PYTHONPATH: v2
-        run: pytest -q v2/tests
+          PYTHONPATH: v2:v3
+        run: pytest -q v2/tests v3/tests
       - name: Import application modules
         env:
-          PYTHONPATH: v2
-        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui, wywallet.receipt, wywallet.exporting"
+          PYTHONPATH: v2:v3
+        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui, wywallet.receipt, wywallet.exporting, v3_overrides"
