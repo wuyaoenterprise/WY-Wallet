@@ -1,67 +1,64 @@
 # WY Wallet V2
 
-This directory contains the isolated V2 application. The existing production entry point in the repository root remains unchanged.
+This directory contains the isolated Streamlit V2 application. Root production `app.py` and root `requirements.txt` remain unchanged.
 
-## Deploy as a separate Streamlit app
+## Deployment
 
 - Repository: `wuyaoenterprise/WY-Wallet`
 - Branch: `agent/wy-wallet-v2-redesign`
 - Main file: `v2/app.py`
-- Copy the existing `SUPABASE_URL`, `SUPABASE_KEY`, and `GOOGLE_API_KEY` values into the new Streamlit app secrets.
+- Secrets: `SUPABASE_URL`, `SUPABASE_KEY`, `GOOGLE_API_KEY`
+- Timezone: `Asia/Kuala_Lumpur`
 
-V2 continues to use the existing Supabase `transactions` and `categories` tables. Changes made in either site therefore affect the same transaction data.
+V2 continues using the existing Supabase `transactions` and `categories` tables, so changes in the old site and V2 affect the same data.
 
-## Application structure
+## Stable architecture
 
-- `v2/app.py` is the stable Streamlit entry point.
-- `v2/app_rich.py` contains the full interface, database operations, AI functions, and reports.
-- The entry point uses `runpy` so the implementation executes again on every Streamlit rerun.
-- Transaction SELECT queries are automatically paginated in 1,000-row batches, up to a defensive limit of 100,000 rows, so historical records are not hidden by the Supabase per-request row limit.
-- `.github/workflows/v2-syntax-check.yml` installs V2 dependencies and compiles all remaining Python files.
+V2 no longer rewrites Python source at runtime and no longer uses `exec`, Streamlit monkey-patching, or Gemini model monkey-patching.
 
-## Current V2 design
+- `v2/app.py` — tiny stable entry point
+- `v2/wywallet/config.py` — constants, MYR, Malaysia timezone, Gemini 3.7 model ID
+- `v2/wywallet/db.py` — paginated reads, validation, writes, categories, cache invalidation
+- `v2/wywallet/analytics.py` — deterministic finance calculations
+- `v2/wywallet/ai.py` — Google GenAI SDK, structured finance query planning, receipt extraction
+- `v2/wywallet/ui.py` — safe HTML helpers and fixed Plotly configuration
+- `v2/wywallet/web.py` — main UI
+- `v2/pages/1_📷AI收据识别.py` — dedicated receipt workflow
+- `v2/tests/test_core.py` — finance and validation regression tests
 
-- Sidebar navigation and compact dashboard
-- Current-month income, expenses, balance, daily average, month comparison, and projected month-end spending
-- Professional transaction table with search, filters, sorting, row selection, editing, safe deletion, and one-step undo
-- Category creation integrated directly into add, edit, and receipt workflows
-- Receipt recognition with editable results
-- AI analysis receives summarized statistics rather than the complete yearly ledger
-- Excel and CSV backup export
-- Category rename/merge workflow that also updates old transactions
-- No data-import page or upload interface
+## Data correctness and safety
 
-## Report design
+- Supabase transaction reads paginate in 1,000-row batches up to 100,000 rows.
+- All new/edited transactions require a valid date, non-empty item/category, `Expense`/`Income` type, and amount greater than zero.
+- Search is literal, not regular-expression based.
+- Categories shown in filters are the union of the category table and categories actually present in historical transactions.
+- Category merge is ordered to avoid data loss: transactions are moved before the source category is removed, and the result is verified.
+- Database errors are cleared after a successful read.
+- A manual refresh button invalidates shared caches.
+- Backups include `Transactions`, `Categories`, and `Metadata` sheets.
+- Historical data import has been removed from V2.
 
-The original quick-reading charts are retained in **Quick overview**:
+## AI
 
-- January-to-December spending bars
-- Category donut chart
-- Daily spending bars
-- Monthly category ranking
-- Spending calendar
+All AI calls use stable `gemini-3.7-flash` through `google-genai`.
 
-Additional report layers include:
+Finance chat no longer sends a duplicated full ledger on every question. Gemini first converts the conversation into a structured query plan (topic, metric, year, month range and exact matching ledger labels). Pandas then calculates authoritative amounts locally. Gemini receives only the calculated result for the final natural-language answer.
 
-- Income, expense, and balance trend
-- Cumulative spending compared with the previous year
-- Monthly savings rate
-- Monthly category composition
-- Daily spending stacked by category
-- Weekday spending pattern
-- Transaction-size distribution
-- Category amount, frequency, and average transaction size
-- Twelve-month trend for an individual category
-- High-spending items
-- Statistical high-value transaction prompts
-- Repeated-item / possible recurring expense detection
-- Duplicate, blank-name, and invalid-amount data checks
+Conversation state stores the resolved subject and time scope, so follow-ups such as `1到8月分别多少？`, `哪个月最高？`, and `那2025呢？` preserve the previous topic unless the user explicitly changes it.
 
-All spending bar charts use a zero-based Y-axis. Annual charts always include all 12 months, including months with no spending.
+Receipt recognition uses structured output, human review, final validation, duplicate checks after editing, a fresh duplicate check immediately before insert, and shared cache invalidation.
 
-## Safety
+## Reports and UX
 
-- No database migration is included.
-- Root `app.py` and root `requirements.txt` are not modified.
-- V2 writes to the same Supabase data as the old site, so test deletion and category merging carefully.
-- Keep Pull Request #1 as a draft until the separately deployed V2 site has been tested.
+- Locked Plotly charts: no accidental drag/zoom/double-click reset or toolbar.
+- Income/expense/balance semantic colors and consistent styling.
+- Mobile-friendly transaction card mode in addition to the desktop table.
+- Current-year monthly average includes elapsed months even when a month has zero spending; past years divide by all 12 months.
+- Savings rate displays `N/A` when no income exists.
+- Weekday analysis uses average spending per occurrence of each weekday instead of raw weekday totals.
+- Recurring-expense detection combines month coverage, amount stability and time cadence so frequent daily purchases are not automatically labelled subscriptions.
+- Anomaly detection compares transactions within their own category.
+
+## Validation
+
+GitHub Actions tests both Python 3.12 and 3.14. CI installs all dependencies, compiles V2, rejects the legacy Gemini SDK/runtime source rewriting, runs core unit tests, and smoke-imports the application modules.
