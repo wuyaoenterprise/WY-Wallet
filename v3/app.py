@@ -14,6 +14,8 @@ import wywallet.web as web
 
 
 _original_inject_css = web.inject_css
+_original_load_transactions = web.load_transactions
+_original_load_invalid_transactions = web.load_invalid_transactions
 
 
 def _inject_v3_css() -> None:
@@ -37,6 +39,29 @@ def _inject_v3_css() -> None:
 
 
 web.inject_css = _inject_v3_css
+
+
+@st.cache_data(ttl=300, max_entries=16, show_spinner=False)
+def _cached_valid_transactions(data_revision: int):
+    # data_revision changes on every V3 write or explicit Refresh action.
+    return _original_load_transactions()
+
+
+@st.cache_data(ttl=300, max_entries=16, show_spinner=False)
+def _cached_invalid_transactions(data_revision: int):
+    return _original_load_invalid_transactions()
+
+
+def _fast_load_transactions():
+    return _cached_valid_transactions(int(st.session_state.get("data_revision", 0)))
+
+
+def _fast_load_invalid_transactions():
+    return _cached_invalid_transactions(int(st.session_state.get("data_revision", 0)))
+
+
+web.load_transactions = _fast_load_transactions
+web.load_invalid_transactions = _fast_load_invalid_transactions
 
 
 # Streamlit normally reruns the entire script for every widget interaction.
