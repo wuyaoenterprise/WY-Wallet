@@ -49,8 +49,14 @@ def _markdown_texts(at: AppTest) -> list[str]:
     return [str(element.value) for element in at.markdown]
 
 
+def _unprotected_test_app(route: str | None = None, timeout: int = 25) -> AppTest:
+    at = AppTest.from_string(_script(route), default_timeout=timeout)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    return at
+
+
 def test_main_app_default_dashboard_renders_without_runtime_exception():
-    at = AppTest.from_string(_script(), default_timeout=25)
+    at = _unprotected_test_app()
     at.run()
     assert not at.exception
     assert any("财务总览" in text for text in _markdown_texts(at))
@@ -59,20 +65,21 @@ def test_main_app_default_dashboard_renders_without_runtime_exception():
 
 @pytest.mark.parametrize(
     ("route", "marker"),
-    [
-        ("交易记录", "交易记录"),
-        ("分析报表", "分析报表"),
-        ("AI 洞察", "AI 洞察"),
-        ("设置与备份", "设置与备份"),
-    ],
+    [("交易记录", "交易记录"), ("分析报表", "分析报表"), ("AI 洞察", "AI 洞察"), ("设置与备份", "设置与备份")],
 )
 def test_each_main_route_smokes_in_fresh_streamlit_session(route: str, marker: str):
-    # Fresh AppTest instances avoid stale segmented-control widget state from a
-    # different route while still exercising the real route body end-to-end.
-    at = AppTest.from_string(_script(route), default_timeout=25)
+    at = _unprotected_test_app(route)
     at.run()
     assert not at.exception, f"route {route} raised: {at.exception}"
     assert any(marker in text for text in _markdown_texts(at)), route
+
+
+def test_missing_access_configuration_fails_closed():
+    at = AppTest.from_string(_script(), default_timeout=20)
+    at.run()
+    assert not at.exception
+    assert any("安全设置未完成" in text for text in _markdown_texts(at))
+    assert not any("财务总览" in text for text in _markdown_texts(at))
 
 
 def test_main_app_password_gate_blocks_data_until_authenticated():
@@ -82,15 +89,10 @@ def test_main_app_password_gate_blocks_data_until_authenticated():
     assert not at.exception
     assert any("WY Wallet 私人访问" in text for text in _markdown_texts(at))
     assert len(at.text_input) >= 1
-
     at.text_input[0].input("test-secret")
     enter = next(button for button in at.button if button.label == "进入")
     enter.click().run()
     assert not at.exception
-    # In a real browser st.rerun() immediately redraws the authenticated app.
-    # AppTest can retain stale button-group nodes across that rerun boundary, so
-    # verify the durable authentication state instead of forcing a second run
-    # through the testing framework's known stale-widget edge case.
     assert bool(at.session_state["web_access_ok"]) is True
 
 
