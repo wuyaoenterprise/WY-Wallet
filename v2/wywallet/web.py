@@ -85,7 +85,7 @@ def _require_optional_private_access() -> bool:
     inject_css()
     page_header("WY Wallet 私人访问", "请输入部署环境中的 WEB_ACCESS_PASSWORD。")
     entered = st.text_input("访问密码", type="password")
-    if st.button("进入", type="primary", use_container_width=True):
+    if st.button("进入", type="primary", width="stretch"):
         if hmac.compare_digest(entered, configured):
             st.session_state["web_access_ok"] = True
             st.rerun()
@@ -127,7 +127,7 @@ def add_transaction_dialog(categories: list[str]) -> None:
     note = st.text_area("备注（可选）", key="add_note")
     if tx_type == REFUND:
         st.caption("退款不是收入；它会抵减所选类别的净支出。")
-    if st.button("保存交易", type="primary", use_container_width=True):
+    if st.button("保存交易", type="primary", width="stretch"):
         category = new_category_name.strip() if selected_category == ADD_CATEGORY_OPTION else selected_category
         try:
             normalized = normalize_transaction({"date": tx_date, "item": item, "category": category, "type": tx_type or EXPENSE, "amount": amount, "note": note})
@@ -163,7 +163,7 @@ def edit_transaction_dialog(transaction_id: int, categories: list[str]) -> None:
     item = st.text_input("项目或商家", value=row["item"], key=f"edit_item_{transaction_id}")
     amount = st.number_input("金额 (RM)", min_value=0.0, step=0.01, value=float(row["amount"]), key=f"edit_amount_{transaction_id}")
     note = st.text_area("备注", value=row["note"], key=f"edit_note_{transaction_id}")
-    if st.button("保存修改", type="primary", use_container_width=True):
+    if st.button("保存修改", type="primary", width="stretch"):
         category = new_category.strip() if selected == ADD_CATEGORY_OPTION else selected
         try:
             normalized = normalize_transaction({"date": tx_date, "item": item, "category": category, "type": tx_type or EXPENSE, "amount": amount, "note": note})
@@ -190,7 +190,7 @@ def delete_transaction_dialog(transaction_id: int) -> None:
     st.write(f"**{row['item']}**")
     st.caption(f"{row['date'].date()} · {row['category']} · {TYPE_LABELS[row['type']]} · {money(row['amount'])}")
     confirm = st.checkbox("我确认删除这笔交易", key=f"confirm_delete_{transaction_id}")
-    if st.button("确认删除", type="primary", disabled=not confirm, use_container_width=True, key=f"delete_{transaction_id}"):
+    if st.button("确认删除", type="primary", disabled=not confirm, width="stretch", key=f"delete_{transaction_id}"):
         try:
             snapshot = {k: row.get(k) for k in ["date", "item", "category", "type", "amount", "note"]}
             delete_transaction(transaction_id)
@@ -222,7 +222,7 @@ def repair_invalid_dialog(raw_row: dict) -> None:
     category = st.text_input("类别", value=str(raw_row.get("category") or ""), key=f"repair_cat_{tx_id}")
     amount = st.number_input("金额", min_value=0.01, step=0.01, value=default_amount, key=f"repair_amount_{tx_id}")
     note = st.text_area("备注", value=str(raw_row.get("note") or ""), key=f"repair_note_{tx_id}")
-    if st.button("保存修复", type="primary", use_container_width=True):
+    if st.button("保存修复", type="primary", width="stretch"):
         try:
             update_transaction(tx_id, {"date": tx_date, "item": item, "category": category, "type": tx_type, "amount": amount, "note": note})
             st.toast("无效交易已修复并重新纳入报表")
@@ -245,9 +245,9 @@ def _render_transaction_cards(filtered: pd.DataFrame, categories: list[str], key
             if row.get("note"):
                 st.caption(str(row["note"]))
             e, d, _ = st.columns([1, 1, 3])
-            if e.button("编辑", key=f"{key_prefix}_edit_{int(row['id'])}", use_container_width=True):
+            if e.button("编辑", key=f"{key_prefix}_edit_{int(row['id'])}", width="stretch"):
                 edit_transaction_dialog(int(row["id"]), categories)
-            if d.button("删除", key=f"{key_prefix}_delete_{int(row['id'])}", use_container_width=True):
+            if d.button("删除", key=f"{key_prefix}_delete_{int(row['id'])}", width="stretch"):
                 delete_transaction_dialog(int(row["id"]))
 
 
@@ -268,9 +268,9 @@ def _render_static_transaction_table(filtered: pd.DataFrame, categories: list[st
         row = row_map[int(selected_id)]
         st.markdown(safe_detail_html(row["item"], row["category"], TYPE_LABELS[row["type"]], row["amount"], str(row["date"].date()), row["note"], _positive_flow(row["type"])), unsafe_allow_html=True)
         e, d, _ = st.columns([1, 1, 4])
-        if e.button("编辑交易", type="primary", use_container_width=True):
+        if e.button("编辑交易", type="primary", width="stretch"):
             edit_transaction_dialog(int(selected_id), categories)
-        if d.button("删除交易", use_container_width=True):
+        if d.button("删除交易", width="stretch"):
             delete_transaction_dialog(int(selected_id))
 
 
@@ -326,11 +326,11 @@ def _dashboard(transactions: pd.DataFrame) -> None:
 def _transactions_page(transactions: pd.DataFrame, categories: list[str]) -> None:
     page_header("交易记录", "退款单独记录并抵减支出；未来日期不允许进入已发生账本。")
     add, receipt, undo, refresh, _ = st.columns([1, 1.2, 1.25, 1, 2.8])
-    if add.button("＋ 新增交易", type="primary", use_container_width=True):
+    if add.button("＋ 新增交易", type="primary", width="stretch"):
         add_transaction_dialog(categories)
     with receipt:
-        st.page_link("pages/1_📷AI收据识别.py", label="📷 AI 收据识别", use_container_width=True)
-    if st.session_state.get("recently_deleted") and undo.button("↩ 撤销删除", use_container_width=True):
+        st.page_link("pages/1_📷AI收据识别.py", label="📷 AI 收据识别", width="stretch")
+    if st.session_state.get("recently_deleted") and undo.button("↩ 撤销删除", width="stretch"):
         snapshot = st.session_state.get("recently_deleted")
         try:
             insert_transactions([snapshot])
@@ -339,7 +339,7 @@ def _transactions_page(transactions: pd.DataFrame, categories: list[str]) -> Non
             st.rerun()
         except Exception as exc:
             st.error(f"撤销失败：{exc}。撤销快照仍保留，可再次尝试。")
-    if refresh.button("↻ 刷新", use_container_width=True):
+    if refresh.button("↻ 刷新", width="stretch"):
         refresh_data(); st.rerun()
     with st.expander("筛选交易", expanded=True):
         s, y, m = st.columns([2, 1, 1])
@@ -479,7 +479,7 @@ def _reports_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> Non
             fig = px.bar(data.sort_values("净支出"), x="净支出", y="category", orientation="h", labels={"category": "", "净支出": "净支出 (RM)"})
             fig.update_xaxes(tickprefix="RM ")
             render_chart(fig, height=max(390, 34 * len(data)))
-            st.dataframe(data.rename(columns={"category": "类别"}), hide_index=True, use_container_width=True, column_config={"毛支出": st.column_config.NumberColumn(format="RM %.2f"), "退款": st.column_config.NumberColumn(format="RM %.2f"), "净支出": st.column_config.NumberColumn(format="RM %.2f")})
+            st.dataframe(data.rename(columns={"category": "类别"}), hide_index=True, width="stretch", column_config={"毛支出": st.column_config.NumberColumn(format="RM %.2f"), "退款": st.column_config.NumberColumn(format="RM %.2f"), "净支出": st.column_config.NumberColumn(format="RM %.2f")})
     else:
         anomalies = analytics.anomaly_transactions(year_all)
         recurring = analytics.recurring_items(year_all)
@@ -490,14 +490,14 @@ def _reports_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> Non
                 st.info("没有发现明显异常，或数据量不足。")
             else:
                 show = anomalies[["date", "item", "category", "amount"]].head(20).copy(); show["date"] = show["date"].dt.strftime("%Y-%m-%d")
-                st.dataframe(show, hide_index=True, use_container_width=True, column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")})
+                st.dataframe(show, hide_index=True, width="stretch", column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")})
         with r:
             section_title("疑似固定／周期支出")
             if recurring.empty:
                 st.info("没有发现规律足够明显的周期支出。")
             else:
                 show = recurring.head(20).copy(); show["最近日期"] = pd.to_datetime(show["最近日期"]).dt.strftime("%Y-%m-%d"); show["金额波动"] = show["金额波动"].map(lambda v: f"{v:.0%}")
-                st.dataframe(show, hide_index=True, use_container_width=True)
+                st.dataframe(show, hide_index=True, width="stretch")
         dq = analytics.data_quality(year_all)
         a, b, c, d = st.columns(4)
         a.metric("空项目名称", dq["blank_items"]); b.metric("零或负金额", dq["nonpositive_amounts"]); c.metric("疑似重复", dq["duplicates"]); d.metric("数据库无效记录", len(invalid_rows))
@@ -518,7 +518,7 @@ def _render_ai_list_from_plan(plan_dict: dict, transactions: pd.DataFrame) -> No
     show = df.iloc[start:end][["date", "item", "category", "type", "amount", "note"]].copy()
     show["date"] = show["date"].dt.strftime("%Y-%m-%d")
     show["type"] = show["type"].map(TYPE_LABELS)
-    st.dataframe(show, hide_index=True, use_container_width=True, height=520, column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")})
+    st.dataframe(show, hide_index=True, width="stretch", height=520, column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")})
     st.caption(f"共 {len(df):,} 笔；当前显示第 {start + 1:,}–{end:,} 笔。")
 
 
@@ -536,7 +536,7 @@ def _ai_page(transactions: pd.DataFrame) -> None:
         st.session_state["ai_data_signature"] = signature; st.session_state["ai_scope_year"] = selected_year
     year_expenses = transactions[(transactions["date"].dt.year == selected_year) & (transactions["type"] == EXPENSE)].copy()
     classify, reset, _ = st.columns([1.2, 1, 3])
-    if classify.button("AI 宏观归类", type="primary", use_container_width=True):
+    if classify.button("AI 宏观归类", type="primary", width="stretch"):
         try:
             with st.spinner("正在分批归类项目..."):
                 mapping = categorize_macro(json.dumps(year_expenses["item"].dropna().unique().tolist(), ensure_ascii=False))
@@ -544,7 +544,7 @@ def _ai_page(transactions: pd.DataFrame) -> None:
             st.session_state["macro_result"] = result; st.session_state["macro_year"] = selected_year; st.rerun()
         except Exception as exc:
             st.error(f"AI 归类失败：{exc}")
-    if reset.button("清除分析", use_container_width=True):
+    if reset.button("清除分析", width="stretch"):
         st.session_state["ai_chat_history"] = []; st.session_state["ai_conversation_state"] = {}
         st.session_state.pop("macro_result", None); st.session_state.pop("ai_last_list_plan", None); st.rerun()
     if st.session_state.get("macro_year") == selected_year and isinstance(st.session_state.get("macro_result"), pd.DataFrame):
@@ -599,11 +599,11 @@ def _settings_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame, categ
         usage = transactions.groupby("category").agg(使用笔数=("amount", "size"), 累计金额=("amount", "sum")).reset_index().rename(columns={"category": "类别"}) if not transactions.empty else pd.DataFrame(columns=["类别", "使用笔数", "累计金额"])
         if not usage.empty:
             usage["状态"] = usage["类别"].map(lambda v: "已登记" if str(v).casefold() in registered else "历史记录未登记")
-        st.dataframe(usage, hide_index=True, use_container_width=True)
+        st.dataframe(usage, hide_index=True, width="stretch")
         missing = unregistered_categories(transactions)
         if missing:
             st.warning("发现未登记历史类别：" + "、".join(missing))
-            if st.button("登记全部未登记类别", use_container_width=True):
+            if st.button("登记全部未登记类别", width="stretch"):
                 failures = []
                 for name in missing:
                     try: create_category(name)
@@ -614,7 +614,7 @@ def _settings_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame, categ
         with left:
             section_title("新增类别")
             name = st.text_input("类别名称", key="settings_new_category")
-            if st.button("新增类别", type="primary", use_container_width=True):
+            if st.button("新增类别", type="primary", width="stretch"):
                 try: st.toast("类别已建立" if create_category(name) else "类别已存在"); st.rerun()
                 except Exception as exc: st.error(f"新增失败：{exc}")
         with right:
@@ -625,7 +625,7 @@ def _settings_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame, categ
                 choices = [v for v in categories if v.casefold() != source.casefold()]
                 target = st.selectbox("目标类别", choices, key="merge_target") if mode == "现有类别" and choices else st.text_input("新类别名称", key="merge_new_name")
                 confirm = st.checkbox("我确认执行类别合并", key="merge_confirm")
-                if st.button("执行改名／合并", disabled=not confirm, use_container_width=True):
+                if st.button("执行改名／合并", disabled=not confirm, width="stretch"):
                     try:
                         result = merge_category_safely(source, target); st.success(f"完成：移动 {result.moved_rows} 笔交易。" + (" " + result.cleanup_note if result.cleanup_note else "")); st.rerun()
                     except Exception as exc: st.error(f"合并失败：{exc}")
@@ -634,18 +634,18 @@ def _settings_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame, categ
             st.success("没有发现无效记录。")
         else:
             st.warning(f"发现 {len(invalid_rows)} 笔无效记录；它们不会进入报表。")
-            st.dataframe(invalid_rows, hide_index=True, use_container_width=True, height=360)
+            st.dataframe(invalid_rows, hide_index=True, width="stretch", height=360)
             row_map = {}
             for _, row in invalid_rows.iterrows():
                 try: row_map[int(row["id"])] = row.to_dict()
                 except Exception: pass
             if row_map:
                 selected = st.selectbox("选择无效记录进行修复", list(row_map), format_func=lambda i: f"ID {i} · {row_map[i].get('item', '')} · {row_map[i].get('issues', '')}")
-                if st.button("打开修复表单", type="primary", use_container_width=True): repair_invalid_dialog(row_map[selected])
-            st.download_button("下载无效记录 CSV", safe_csv_bytes(invalid_rows), f"WY_Wallet_invalid_{today_my()}.csv", mime="text/csv", use_container_width=True)
+                if st.button("打开修复表单", type="primary", width="stretch"): repair_invalid_dialog(row_map[selected])
+            st.download_button("下载无效记录 CSV", safe_csv_bytes(invalid_rows), f"WY_Wallet_invalid_{today_my()}.csv", mime="text/csv", width="stretch")
     else:
         st.caption("备份不会在普通页面 rerun 时偷偷全量读取数据库。")
-        if st.button("准备最新完整备份", type="primary", use_container_width=True):
+        if st.button("准备最新完整备份", type="primary", width="stretch"):
             try:
                 with st.spinner("正在从 Supabase 全量读取最新数据..."):
                     fresh, fresh_invalid, _ = fetch_transactions_fresh(max_rows=None)
@@ -668,8 +668,8 @@ def _settings_page(transactions: pd.DataFrame, invalid_rows: pd.DataFrame, categ
         if bundle:
             st.success(f"备份已准备：{bundle['time']}")
             d1, d2 = st.columns(2)
-            d1.download_button("下载最新完整 Excel 备份", bundle["excel"], f"WY_Wallet_V2_{today_my()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-            d2.download_button("下载最新交易 CSV", bundle["csv"], f"WY_Wallet_V2_{today_my()}.csv", mime="text/csv", use_container_width=True)
+            d1.download_button("下载最新完整 Excel 备份", bundle["excel"], f"WY_Wallet_V2_{today_my()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+            d2.download_button("下载最新交易 CSV", bundle["csv"], f"WY_Wallet_V2_{today_my()}.csv", mime="text/csv", width="stretch")
             st.caption("Excel/CSV 已防止以 =、+、-、@ 开头的外部文本被 Spreadsheet 当成公式执行。")
 
 
@@ -687,11 +687,11 @@ def run() -> None:
         st.warning(f"数据库有 {len(invalid_rows)} 笔无效记录，已从统计排除。到「设置与备份 → 数据修复」处理。")
     with st.sidebar:
         st.markdown('<div class="wy-brand"><div class="wy-brand-title">💳 WY Wallet</div><div class="wy-brand-subtitle">个人财务中心 · V2</div></div>', unsafe_allow_html=True)
-        if st.button("＋ 新增交易", type="primary", use_container_width=True): add_transaction_dialog(categories)
-        st.page_link("pages/1_📷AI收据识别.py", label="📷 AI 收据识别", use_container_width=True)
+        if st.button("＋ 新增交易", type="primary", width="stretch"): add_transaction_dialog(categories)
+        st.page_link("pages/1_📷AI收据识别.py", label="📷 AI 收据识别", width="stretch")
         navigation = st.radio("导航", ["总览", "交易记录", "分析报表", "AI 洞察", "设置与备份"], format_func=lambda v: {"总览": "⌂  总览", "交易记录": "≡  交易记录", "分析报表": "▥  分析报表", "AI 洞察": "✦  AI 洞察", "设置与备份": "⚙  设置与备份"}[v], label_visibility="collapsed")
         st.divider()
-        if st.button("↻ 刷新数据", use_container_width=True): refresh_data(); st.rerun()
+        if st.button("↻ 刷新数据", width="stretch"): refresh_data(); st.rerun()
         st.caption(f"数据读取：{data_loaded_at() or '未知'}")
         st.caption(f"{APP_VERSION} · {BUILD_ID}")
         st.caption(f"Malaysia time · {TIMEZONE_NAME}")
