@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
-const MODEL = 'gemini-3.6-flash'
+const MODEL = 'gemini-3.7-flash'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -60,7 +60,6 @@ Deno.serve(async (req) => {
         }],
         generationConfig: {
           responseMimeType: 'application/json',
-          temperature: 0.1,
         },
       }),
     },
