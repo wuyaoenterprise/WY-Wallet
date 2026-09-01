@@ -97,11 +97,13 @@ Metric rules:
 - Do not silently change an inherited income question back to expense.
 
 Time rules:
-- time_mode=specific for any explicit date, date range, month/range, week, quarter, recent-N-days, 上个月/上星期 etc. Resolve to exact inclusive ISO date_from/date_to using current_malaysia_date and previous_state when needed.
-- time_mode=inherit when the user means the same prior time range, e.g. '那2025呢' after a month/range question; use year_override=2025 so the app shifts the inherited range to that year.
+- time_mode=specific for an explicit PRIMARY date/date range/month range/week/quarter/recent-N-days request. Resolve exact inclusive ISO date_from/date_to.
+- time_mode=inherit when the user means the prior primary range. '那2025呢' after a prior month/range uses time_mode=inherit plus year_override=2025, shifting that same range to 2025.
 - time_mode=selected_year when no time is expressed and the UI selected year should be used. year_override may override it.
-- '1到8月分别多少' must inherit subject/metric but use exact Jan-01 through Aug-31 of the intended year.
-- '上个月' after a concrete prior month refers to the month before that prior range; otherwise relative to current Malaysia date.
+- '1到8月分别多少' inherits subject/metric but has a new explicit primary range Jan-01 through Aug-31.
+- A RELATIVE COMPARISON TARGET must not replace the primary range. If the prior range is August and the user says '跟上个月比', primary time_mode=inherit and comparison=previous_period, meaning August vs July, NOT July vs June.
+- Likewise '跟去年同期比' or '同比' keeps/inherits the primary range and sets comparison=previous_year.
+- Only treat '上个月' as a new primary range when the user asks for it directly rather than as the target of a comparison.
 
 Comparison rules:
 - previous_period for '跟上个月/上一段比', '比之前呢', or equivalent period-over-period comparison.
@@ -225,6 +227,37 @@ def _resolve_time(plan: FinanceQueryPlan, selected_year: int, state: dict) -> tu
     return _full_year(int(plan.year_override or selected_year))
 
 
+def _comparison_followup_uses_prior_primary_range(question: str, plan: FinanceQueryPlan, state: dict) -> bool:
+    """Guard against interpreting a comparison target as the new primary period."""
+    if not state.get("date_from") or not state.get("date_to"):
+        return False
+    text = re.sub(r"\s+", "", str(question or "").casefold())
+    if plan.comparison not in {"previous_period", "previous_year"}:
+        return False
+    relative_target = any(token in text for token in [
+        "上个月", "上個月", "上一段", "之前", "前一段", "去年同期", "上年同期", "同比", "去年比", "上年比",
+    ])
+    if not relative_target:
+        return False
+    # If the user explicitly names a new sub-year primary range, keep the model's
+    # specific range (e.g. "8月跟7月比"). A bare year override such as "2025呢，
+    # 跟去年同期比" still inherits the prior month/range and shifts its year.
+    explicit_primary = bool(re.search(
+        r"(?:\d{1,2}|[一二三四五六七八九十]{1,3})月|"
+        r"\d{1,2}[日号號]|第?[一二三四1-4]季|q[1-4]|最近\d+天|过去\d+天|過去\d+天|全年|整年|今年|本年",
+        text,
+    ))
+    # Relative target phrases themselves contain 月; remove them before checking.
+    for token in ["上个月", "上個月", "去年同期", "上年同期"]:
+        text = text.replace(token, "")
+    explicit_primary = bool(re.search(
+        r"(?:\d{1,2}|[一二三四五六七八九十]{1,3})月|\d{1,2}[日号號]|"
+        r"第?[一二三四1-4]季|q[1-4]|最近\d+天|过去\d+天|過去\d+天|全年|整年|今年|本年",
+        text,
+    ))
+    return not explicit_primary
+
+
 def plan_finance_question(question: str, selected_year: int, transactions: pd.DataFrame,
                           conversation_state: dict | None, recent_history: list[dict] | None) -> FinanceQueryPlan:
     state = conversation_state or {}
@@ -263,6 +296,11 @@ def plan_finance_question(question: str, selected_year: int, transactions: pd.Da
     category_set = set(_candidate_values(transactions, "category", limit=100_000))
     plan.matched_items = [value for value in plan.matched_items if value in item_set]
     plan.matched_categories = [value for value in plan.matched_categories if value in category_set]
+
+    if _comparison_followup_uses_prior_primary_range(question, plan, state):
+        plan.time_mode = "inherit"
+        plan.date_from = None
+        plan.date_to = None
 
     start, end = _resolve_time(plan, selected_year, state)
     plan.date_from = start.isoformat()
