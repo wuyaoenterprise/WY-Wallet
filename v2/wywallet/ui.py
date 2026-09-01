@@ -139,4 +139,4 @@ def render_chart(fig: go.Figure, *, height: int | None = None, legend: bool | No
         updates["hovermode"] = hovermode
     if updates:
         fig.update_layout(**updates)
-    st.plotly_chart(polish_figure(fig), use_container_width=True, config=LOCKED_CHART_CONFIG)
+    st.plotly_chart(polish_figure(fig), width="stretch", config=LOCKED_CHART_CONFIG)
