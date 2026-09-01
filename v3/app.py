@@ -15,8 +15,8 @@ for path in (SHARED_WEB_CORE, V3_ROOT):
 import wywallet.web as web
 from v3_overrides import apply_overrides, expire_access_session_if_needed, render_session_controls
 
-# V3.1.1 final-audit entrypoint. All user-facing V3 runtime fixes are applied
-# before fragment wrappers capture their page functions.
+# V3.1.1 final audited entrypoint. Runtime correctness/privacy upgrades are
+# applied before fragment wrappers capture their page functions.
 apply_overrides()
 expire_access_session_if_needed()
 
