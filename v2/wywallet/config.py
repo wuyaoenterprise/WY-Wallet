@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-APP_TITLE = "WY Wallet V2"
-APP_VERSION = "2026.09.01-r2"
-BUILD_ID = "refund-ai-accounting-r2"
+APP_TITLE = "WY Wallet V3"
+APP_VERSION = "2026.09.01-v3.0.0"
+BUILD_ID = "v3-launch-gemini37"
 TIMEZONE_NAME = "Asia/Kuala_Lumpur"
 TIMEZONE = ZoneInfo(TIMEZONE_NAME)
 CURRENCY = "MYR"
