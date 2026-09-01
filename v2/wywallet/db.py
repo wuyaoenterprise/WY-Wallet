@@ -11,7 +11,9 @@ from supabase import Client, create_client
 from .config import (
     DB_BATCH_SIZE,
     DEFAULT_CATEGORIES,
+    EXPENSE,
     MAX_TRANSACTION_ROWS,
+    REFUND,
     TRANSACTION_TYPES,
     UI_CACHE_TTL_SECONDS,
     now_my,
@@ -81,11 +83,20 @@ def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, l
     if not category:
         issues.append("类别为空")
 
-    tx_type = str(row.get("type") or "").strip()
+    raw_type = str(row.get("type") or "").strip()
+    raw_amount = pd.to_numeric(row.get("amount"), errors="coerce")
+    tx_type = raw_type
+    amount = raw_amount
+
+    # Shared-table compatibility: legacy production only understands Expense/Income.
+    # V2 therefore stores a refund physically as Expense with a negative amount,
+    # while exposing it logically as Refund with a positive absolute amount.
+    if not pd.isna(raw_amount) and raw_type == EXPENSE and float(raw_amount) < 0:
+        tx_type = REFUND
+        amount = abs(float(raw_amount))
+
     if tx_type not in set(TRANSACTION_TYPES):
         issues.append("类型无效")
-
-    amount = pd.to_numeric(row.get("amount"), errors="coerce")
     if pd.isna(amount) or float(amount) <= 0:
         issues.append("金额无效")
 
@@ -256,18 +267,27 @@ def normalize_transaction(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _encode_transaction_for_db(logical: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(logical)
+    if payload.get("type") == REFUND:
+        payload["type"] = EXPENSE
+        payload["amount"] = -abs(float(payload["amount"]))
+    return payload
+
+
 def normalize_transactions(rows: Iterable[dict[str, Any]] | pd.DataFrame) -> list[dict[str, Any]]:
     records = rows.to_dict("records") if isinstance(rows, pd.DataFrame) else list(rows)
     return [normalize_transaction(dict(row)) for row in records]
 
 
 def insert_transactions(rows: Iterable[dict[str, Any]] | pd.DataFrame) -> int:
-    records = normalize_transactions(rows)
-    if not records:
+    logical_records = normalize_transactions(rows)
+    if not logical_records:
         raise ValueError("没有可保存的记录。")
-    get_client().table("transactions").insert(records).execute()
+    physical_records = [_encode_transaction_for_db(row) for row in logical_records]
+    get_client().table("transactions").insert(physical_records).execute()
     invalidate_data()
-    return len(records)
+    return len(logical_records)
 
 
 def _fetch_transaction_by_id(transaction_id: int) -> dict[str, Any] | None:
@@ -277,10 +297,11 @@ def _fetch_transaction_by_id(transaction_id: int) -> dict[str, Any] | None:
 
 
 def update_transaction(transaction_id: int, row: dict[str, Any]) -> None:
-    payload = normalize_transaction(row)
+    logical = normalize_transaction(row)
+    physical = _encode_transaction_for_db(logical)
     if _fetch_transaction_by_id(transaction_id) is None:
         raise RuntimeError("这笔交易已被其他页面删除或不存在，请刷新后重试。")
-    get_client().table("transactions").update(payload).eq("id", int(transaction_id)).execute()
+    get_client().table("transactions").update(physical).eq("id", int(transaction_id)).execute()
     after = _fetch_transaction_by_id(transaction_id)
     if after is None:
         raise RuntimeError("更新后无法重新读取这笔交易，请刷新确认数据库状态。")
@@ -288,9 +309,9 @@ def update_transaction(transaction_id: int, row: dict[str, Any]) -> None:
     if normalized_after is None or issues:
         raise RuntimeError("数据库返回的更新结果无效，请刷新确认。")
     comparable = {k: normalized_after[k] for k in ["item", "category", "type", "amount", "note"]}
-    expected = {k: payload[k] for k in ["item", "category", "type", "amount", "note"]}
+    expected = {k: logical[k] for k in ["item", "category", "type", "amount", "note"]}
     comparable["date"] = normalized_after["date"].date().isoformat()
-    expected["date"] = payload["date"]
+    expected["date"] = logical["date"]
     if comparable != expected:
         raise RuntimeError("数据库未完整套用修改，可能发生并发更新；请刷新后重试。")
     invalidate_data()
