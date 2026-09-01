@@ -37,8 +37,11 @@ def test_main_app_renders_and_navigation_switches_without_runtime_exception():
     assert not at.exception
     assert any("财务总览" in text for text in _markdown_texts(at))
     assert len(at.metric) >= 5
+    assert len(at.radio) >= 1
 
-    navigation = next(radio for radio in at.radio if "总览" in list(radio.options))
+    # Streamlit's AppTest exposes the radio's original values even when a
+    # format_func decorates what the user sees. Select the app's raw value.
+    navigation = at.radio[0]
     navigation.set_value("交易记录").run()
     assert not at.exception
     assert any("交易记录" in text for text in _markdown_texts(at))
