@@ -25,18 +25,18 @@ LOCKED_CHART_CONFIG = {
 
 CSS = """
 <style>
-:root{--wy-primary:#5b8ff9;--wy-positive:#35b77e;--wy-negative:#ef6464;--wy-refund:#36a2ae;--wy-warning:#f6bd16;--wy-border:rgba(128,128,128,.24);--wy-muted:rgba(160,166,180,.82)}
+:root{--wy-primary:#5b8ff9;--wy-positive:#218a63;--wy-negative:#d84f4f;--wy-refund:#248b96;--wy-warning:#b77900;--wy-border:rgba(128,128,128,.24);--wy-muted:#667085}
 [data-testid="stAppViewContainer"]>.main .block-container{max-width:1280px;padding-top:1.15rem;padding-bottom:3rem}
 [data-testid="stSidebar"]{border-right:1px solid var(--wy-border)}
 .wy-brand{padding:.35rem 0 1rem}.wy-brand-title{font-size:1.45rem;font-weight:800;line-height:1.2}.wy-muted,.wy-brand-subtitle{color:var(--wy-muted);font-size:.88rem}
 .wy-page-title{font-size:1.9rem;font-weight:800;letter-spacing:-.03em;margin:0 0 .15rem}.wy-page-subtitle{color:var(--wy-muted);margin-bottom:1.15rem}.wy-section-title{font-size:1.05rem;font-weight:760;margin:.2rem 0 .65rem}
 .wy-card,.wy-detail{border:1px solid var(--wy-border);border-radius:14px;padding:1rem;background:rgba(127,127,127,.025)}.wy-detail{margin-top:.7rem}.wy-chip{display:inline-block;border:1px solid var(--wy-border);border-radius:999px;padding:.12rem .5rem;font-size:.78rem;color:var(--wy-muted)}
-.wy-empty{border:1px dashed var(--wy-border);border-radius:14px;padding:2rem;text-align:center;color:var(--wy-muted)}.wy-amount-expense{color:var(--wy-negative);font-weight:800}.wy-amount-income{color:var(--wy-positive);font-weight:800}
+.wy-empty{border:1px dashed var(--wy-border);border-radius:14px;padding:2rem;text-align:center;color:var(--wy-muted)}.wy-amount-expense{color:var(--wy-negative);font-weight:800}.wy-amount-income{color:var(--wy-positive);font-weight:800}.wy-amount-refund{color:var(--wy-refund);font-weight:800}
 div[data-testid="stMetric"]{border:1px solid var(--wy-border);border-radius:14px;padding:.82rem 1rem;background:rgba(127,127,127,.035)}div[data-testid="stMetricLabel"]{color:var(--wy-muted)}div[data-testid="stMetricValue"]{font-size:1.42rem}
 .wy-calendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.wy-calendar-head{text-align:center;color:var(--wy-muted);font-size:.78rem;padding:.25rem}.wy-calendar-day{min-height:68px;border:1px solid var(--wy-border);border-radius:10px;padding:.45rem}.wy-calendar-date{color:var(--wy-muted);font-size:.78rem}.wy-calendar-amount{font-size:.84rem;font-weight:750;margin-top:.42rem}
 .wy-callout{border-left:3px solid var(--wy-primary);padding:.7rem .9rem;background:rgba(91,143,249,.08);border-radius:0 10px 10px 0;margin:.4rem 0}
 [data-testid="stPlotlyChart"]{border:1px solid var(--wy-border);border-radius:16px;padding:.35rem .45rem .1rem;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));overflow:hidden}[data-testid="stPlotlyChart"] [data-testid="stElementToolbar"]{display:none!important}[data-testid="stPlotlyChart"] .js-plotly-plot,[data-testid="stPlotlyChart"] .plot-container{touch-action:pan-y!important}
-@media(max-width:760px){[data-testid="stAppViewContainer"]>.main .block-container{padding-left:.7rem;padding-right:.7rem}.wy-page-title{font-size:1.55rem}.wy-calendar{gap:3px}.wy-calendar-day{min-height:48px;padding:.25rem}.wy-calendar-amount{font-size:.66rem;margin-top:.2rem}[data-testid="stPlotlyChart"]{border-radius:12px;padding:.15rem .1rem 0}}
+@media(max-width:760px){[data-testid="stAppViewContainer"]>.main .block-container{padding-left:.7rem;padding-right:.7rem}.wy-page-title{font-size:1.55rem}.wy-calendar{gap:3px}.wy-calendar-day{min-height:48px;padding:.25rem}.wy-calendar-amount{font-size:.66rem;margin-top:.2rem}[data-testid="stPlotlyChart"]{border-radius:12px;padding:.15rem .1rem 0}div[data-testid="stMetric"]{padding:.65rem .75rem}div[data-testid="stMetricValue"]{font-size:1.15rem}}
 </style>
 """
 
@@ -49,6 +49,8 @@ def money(value: float | int | None, signed: bool = False) -> str:
     number = float(value or 0)
     if signed:
         return f"{'+' if number >= 0 else '−'}{CURRENCY_SYMBOL} {abs(number):,.2f}"
+    if number < 0:
+        return f"−{CURRENCY_SYMBOL} {abs(number):,.2f}"
     return f"{CURRENCY_SYMBOL} {number:,.2f}"
 
 
@@ -67,8 +69,12 @@ def empty_state(text: str) -> None:
 
 def safe_detail_html(item: str, category: str, type_label: str, amount: float, tx_date: str, note: str, positive: bool) -> str:
     item_e, category_e, type_e, date_e, note_e = map(lambda x: html.escape(str(x)), [item, category, type_label, tx_date, note or ""])
-    amount_class = "wy-amount-income" if positive else "wy-amount-expense"
-    sign = "+" if positive else "−"
+    if str(type_label) == "退款":
+        amount_class = "wy-amount-refund"
+        sign = "+"
+    else:
+        amount_class = "wy-amount-income" if positive else "wy-amount-expense"
+        sign = "+" if positive else "−"
     note_suffix = f" · {note_e}" if note_e else ""
     return (
         f'<div class="wy-detail"><span class="wy-chip">{type_e}</span> <span class="wy-chip">{category_e}</span>'
