@@ -1,4 +1,4 @@
-name: V2/V3 dependency, tests and smoke check
+name: V3 dependency, regression and Streamlit smoke check
 
 on:
   pull_request:
@@ -34,19 +34,22 @@ jobs:
           python -m pip install -r v3/requirements.txt
           python -m pip install pytest
           python -m pip check
-      - name: Compile V2 and V3 Python files
+      - name: Compile V2 shared core and V3 entry files
         run: python -m compileall -q v2 v3
-      - name: Reject legacy or deprecated runtime paths
+      - name: Reject legacy, stale-branding or deprecated runtime paths
         run: |
           ! grep -R "google.generativeai" v2 v3 --include='*.py'
           ! grep -R "exec(compile" v2 v3 --include='*.py'
           ! grep -R "source.replace" v2 v3 --include='*.py'
           ! grep -R "selection_mode=\"single-row\"" v2/wywallet/web.py
           ! grep -R "use_container_width" v2 v3 --include='*.py'
+          ! grep -R "个人财务中心 · V2" v2/wywallet/web.py v3 --include='*.py'
+          ! grep -R "WY_Wallet_V2_" v2/wywallet/web.py v3 --include='*.py'
           grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v2/wywallet/config.py
           grep -q 'APP_TITLE = "WY Wallet V3"' v2/wywallet/config.py
+          grep -q 'APP_VERSION = "2026.09.01-v3.1.0"' v2/wywallet/config.py
           grep -q 'showSidebarNavigation = false' .streamlit/config.toml
-      - name: Run regression and Streamlit AppTest suite
+      - name: Run regression, V3 entrypoint and Streamlit AppTest suite
         env:
           PYTHONPATH: v2
         run: pytest -q v2/tests
