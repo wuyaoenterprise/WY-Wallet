@@ -1,19 +1,37 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 
 import pandas as pd
 import streamlit as st
 
 from wywallet.ai import recognize_receipt
-from wywallet.config import APP_TITLE, EXPENSE, REFUND, today_my
+from wywallet.config import APP_TITLE, APP_VERSION, BUILD_ID, EXPENSE, REFUND, today_my
 from wywallet.db import create_category, existing_transaction_keys, insert_transactions, load_categories, load_transactions
 from wywallet.receipt import evaluate_receipt_candidates, finalize_receipt_candidates, reconcile_receipt_total
 from wywallet.ui import inject_css, money, page_header
 
 st.set_page_config(page_title=f"AI 收据识别 · {APP_TITLE}", page_icon="📷", layout="wide")
 inject_css()
+
+try:
+    access_password = str(st.secrets.get("WEB_ACCESS_PASSWORD", "") or "")
+except Exception:
+    access_password = ""
+if access_password and not st.session_state.get("web_access_ok"):
+    page_header("WY Wallet 私人访问", "AI 收据页面使用与主站相同的访问保护。")
+    entered = st.text_input("访问密码", type="password", key="receipt_access_password")
+    if st.button("进入", type="primary", use_container_width=True, key="receipt_access_submit"):
+        if hmac.compare_digest(entered, access_password):
+            st.session_state["web_access_ok"] = True
+            st.rerun()
+        else:
+            st.error("密码不正确。")
+    st.stop()
+
 page_header("📷 AI 收据识别", "Gemini 3.7 Flash 负责提取；退款、税费、服务费、折扣、日期、重复项和总额都由本地逻辑再次验证。")
+st.caption(f"{APP_VERSION} · {BUILD_ID}")
 st.page_link("app.py", label="← 返回 WY Wallet", use_container_width=False)
 
 try:
@@ -122,7 +140,6 @@ summary["状态"] = statuses
 st.dataframe(summary[["保存", "日期已确认", "仍然保存重复", "date", "item", "category", "type", "amount", "状态"]], hide_index=True, use_container_width=True, column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")})
 
 duplicate_blocked = sum(status == "疑似重复（未保存）" for status in statuses)
-forced_duplicates = sum(status == "重复但已确认" for status in statuses)
 needs_date = sum(status == "需确认日期" for status in statuses)
 expense_total = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == EXPENSE)
 refund_total = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == REFUND)
