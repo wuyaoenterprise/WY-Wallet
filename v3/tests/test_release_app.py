@@ -65,6 +65,10 @@ def _texts(at: AppTest) -> list[str]:
     return [str(element.value) for element in at.markdown]
 
 
+def _errors(at: AppTest) -> list[str]:
+    return [str(element.value) for element in at.error]
+
+
 def test_actual_v3_entrypoint_renders_dashboard_with_fake_database():
     at = AppTest.from_string(_script(), default_timeout=25)
     at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
@@ -106,9 +110,8 @@ def test_database_failure_is_visible_instead_of_blank_screen():
     at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
-    texts = _texts(at)
-    assert any("无法连接财务数据库" in text for text in texts)
-    assert any("SUPABASE_TEST_FAILURE" in text for text in texts)
+    assert any("无法连接财务数据库" in text for text in _texts(at))
+    assert any("SUPABASE_TEST_FAILURE" in text for text in _errors(at))
 
 
 def test_truncated_ledger_does_not_render_partial_dashboard_totals():
@@ -116,9 +119,8 @@ def test_truncated_ledger_does_not_render_partial_dashboard_totals():
     at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
-    texts = _texts(at)
-    assert any("数据量超过互动统计上限" in text for text in texts)
-    assert not any("DASHBOARD_OK" in text for text in texts)
+    assert any("交易已超过 100,000 笔" in text for text in _errors(at))
+    assert not any("DASHBOARD_OK" in text for text in _texts(at))
 
 
 def test_receipt_page_cannot_bypass_password_gate():
