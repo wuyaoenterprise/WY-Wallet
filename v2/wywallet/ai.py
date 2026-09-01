@@ -83,7 +83,7 @@ class FinanceQueryPlan(BaseModel):
     date_to: str | None = None
     matched_items: list[str] = Field(default_factory=list)
     matched_categories: list[str] = Field(default_factory=list)
-    comparison: Literal["none", "highest", "lowest", "previous_period", "previous_year"] = "none"
+    comparison: Literal["none", "highest", "lowest", "previous_month", "previous_period", "previous_year"] = "none"
 
 
 SYSTEM_LEDGER_PARSER = """You are a query planner for a private finance ledger. Never calculate money.
@@ -118,7 +118,8 @@ Time:
 - comparison targets do not replace the primary range: after an August query, '跟上个月比' means August vs July.
 
 Comparison:
-- previous_period for previous month/previous equivalent period.
+- previous_month specifically for '跟上个月/上月比'. It means the same day-span shifted one calendar month earlier; Aug 1-15 compares with Jul 1-15.
+- previous_period for '跟上一段/前一段/之前同长度期间比'. It means the immediately preceding equal-length period.
 - previous_year for prior-year same period/同比.
 - highest/lowest for which requested month is highest/lowest; zero months count as valid minima.
 """
@@ -211,6 +212,10 @@ def _safe_replace_year(value: date, year: int) -> date:
         return value.replace(year=year, day=28)
 
 
+def _shift_month(value: date, months: int) -> date:
+    return (pd.Timestamp(value) + pd.DateOffset(months=months)).date()
+
+
 def _full_year(year: int) -> tuple[date, date]:
     return date(year, 1, 1), date(year, 12, 31)
 
@@ -237,13 +242,23 @@ def _resolve_time(plan: FinanceQueryPlan, selected_year: int, state: dict) -> tu
     return _full_year(int(plan.year_override or selected_year))
 
 
+def _normalize_comparison_language(question: str, plan: FinanceQueryPlan) -> None:
+    text = re.sub(r"\s+", "", str(question or "").casefold())
+    if any(token in text for token in ["上个月", "上個月", "上月"]):
+        if plan.comparison in {"none", "previous_period", "previous_month"}:
+            plan.comparison = "previous_month"
+    elif any(token in text for token in ["上一段", "前一段", "之前同段", "之前同期"]):
+        if plan.comparison in {"none", "previous_period"}:
+            plan.comparison = "previous_period"
+
+
 def _comparison_followup_uses_prior_primary_range(question: str, plan: FinanceQueryPlan, state: dict) -> bool:
-    if not state.get("date_from") or not state.get("date_to") or plan.comparison not in {"previous_period", "previous_year"}:
+    if not state.get("date_from") or not state.get("date_to") or plan.comparison not in {"previous_month", "previous_period", "previous_year"}:
         return False
     text = re.sub(r"\s+", "", str(question or "").casefold())
-    if not any(token in text for token in ["上个月", "上個月", "上一段", "之前", "前一段", "去年同期", "上年同期", "同比"]):
+    if not any(token in text for token in ["上个月", "上個月", "上月", "上一段", "之前", "前一段", "去年同期", "上年同期", "同比"]):
         return False
-    for token in ["上个月", "上個月", "去年同期", "上年同期"]:
+    for token in ["上个月", "上個月", "上月", "去年同期", "上年同期"]:
         text = text.replace(token, "")
     explicit_primary = bool(re.search(
         r"(?:\d{1,2}|[一二三四五六七八九十]{1,3})月|\d{1,2}[日号號]|第?[一二三四1-4]季|q[1-4]|最近\d+天|过去\d+天|過去\d+天|全年|整年|今年|本年",
@@ -282,12 +297,15 @@ def plan_finance_question(question: str, selected_year: int, transactions: pd.Da
 
     plan.aggregation = (state.get("aggregation") if plan.aggregation_mode == "inherit" else plan.aggregation) or "amount"
     plan.flow = (state.get("flow") if plan.flow_mode == "inherit" else plan.flow) or "expense"
+    if plan.flow == "net" and plan.aggregation != "amount":
+        plan.aggregation = "amount"
 
     item_set = set(_candidate_values(transactions, "item", limit=100_000))
     category_set = set(_candidate_values(transactions, "category", limit=100_000))
     plan.matched_items = [value for value in plan.matched_items if value in item_set]
     plan.matched_categories = [value for value in plan.matched_categories if value in category_set]
 
+    _normalize_comparison_language(question, plan)
     if _comparison_followup_uses_prior_primary_range(question, plan, state):
         plan.time_mode = "inherit"
         plan.date_from = None
@@ -354,6 +372,14 @@ def _flow_rows(frame: pd.DataFrame, flow: str) -> pd.DataFrame:
     return frame.copy()
 
 
+def _relevant_rows(frame: pd.DataFrame, aggregation: str, flow: str, intent: str) -> pd.DataFrame:
+    # Refunds participate in an expense AMOUNT as a reversal. They are not
+    # purchase transactions, so expense counts/averages/lists exclude them.
+    if flow == "expense" and (aggregation in {"count", "average"} or intent == "list"):
+        return frame[frame["type"] == EXPENSE].copy()
+    return _flow_rows(frame, flow)
+
+
 def _aggregate(frame: pd.DataFrame, aggregation: str, flow: str) -> float:
     if aggregation == "count":
         if flow == "expense":
@@ -384,14 +410,15 @@ def _aggregate(frame: pd.DataFrame, aggregation: str, flow: str) -> float:
     return round(gross_expense + refund + income, 2)
 
 
-def _month_rows(frame: pd.DataFrame, start: date, end: date, aggregation: str, flow: str) -> list[dict]:
+def _month_rows(frame: pd.DataFrame, start: date, end: date, aggregation: str, flow: str, intent: str) -> list[dict]:
     periods = pd.period_range(start=pd.Period(start, freq="M"), end=pd.Period(end, freq="M"), freq="M")
     rows = []
     for period in periods:
         month_start = max(start, period.start_time.date())
         month_end = min(end, period.end_time.date(), today_my())
         subset = _filter_range(frame, month_start, month_end) if month_start <= month_end else frame.iloc[0:0]
-        rows.append({"period": str(period), "label": period.strftime("%Y-%m"), "value": _aggregate(subset, aggregation, flow), "count": int(len(_flow_rows(subset, flow)))})
+        relevant = _relevant_rows(subset, aggregation, flow, intent)
+        rows.append({"period": str(period), "label": period.strftime("%Y-%m"), "value": _aggregate(subset, aggregation, flow), "count": int(len(relevant))})
     return rows
 
 
@@ -407,9 +434,15 @@ def _previous_period_range(start: date, end: date) -> tuple[date, date]:
     return comp_end - timedelta(days=days - 1), comp_end
 
 
+def _previous_month_range(start: date, end: date) -> tuple[date, date]:
+    return _shift_month(start, -1), _shift_month(end, -1)
+
+
 def _comparison_range(comparison: str, start: date, end: date) -> tuple[date, date] | None:
     if comparison == "previous_year":
         return _safe_replace_year(start, start.year - 1), _safe_replace_year(end, end.year - 1)
+    if comparison == "previous_month":
+        return _previous_month_range(start, end)
     if comparison == "previous_period":
         return _previous_period_range(start, end)
     return None
@@ -420,7 +453,7 @@ def finance_list_frame(plan: FinanceQueryPlan, transactions: pd.DataFrame) -> pd
     end = min(_parse_iso(plan.date_to) or date(today_my().year, 12, 31), today_my())
     base, _, _ = _filter_subject(transactions.copy(), plan)
     ranged = _filter_range(base, start, end) if start <= end else base.iloc[0:0].copy()
-    rows = _flow_rows(ranged, plan.flow or "expense")
+    rows = _relevant_rows(ranged, plan.aggregation or "amount", plan.flow or "expense", "list")
     return rows.sort_values(["date", "amount"], ascending=[False, False]).reset_index(drop=True)
 
 
@@ -431,9 +464,9 @@ def execute_finance_plan(plan: FinanceQueryPlan, transactions: pd.DataFrame) -> 
     ranged = _filter_range(base, start, end) if start <= end else base.iloc[0:0].copy()
     aggregation = plan.aggregation or "amount"
     flow = plan.flow or "expense"
-    relevant = _flow_rows(ranged, flow)
+    relevant = _relevant_rows(ranged, aggregation, flow, plan.intent)
     total = _aggregate(ranged, aggregation, flow)
-    monthly = _month_rows(base, start, end, aggregation, flow) if start <= end else []
+    monthly = _month_rows(base, start, end, aggregation, flow, plan.intent) if start <= end else []
     highest = max(monthly, key=lambda row: row["value"]) if monthly else None
     lowest = min(monthly, key=lambda row: row["value"]) if monthly else None
 
@@ -467,7 +500,7 @@ def execute_finance_plan(plan: FinanceQueryPlan, transactions: pd.DataFrame) -> 
 
     explanation_transactions: list[dict] = []
     if plan.intent == "explain":
-        rows = _flow_rows(ranged, flow).sort_values(["date", "amount"], ascending=[True, False]).copy()
+        rows = _relevant_rows(ranged, aggregation, flow, "explain").sort_values(["date", "amount"], ascending=[True, False]).copy()
         if not rows.empty:
             rows["date"] = rows["date"].dt.strftime("%Y-%m-%d")
             records = rows[["date", "item", "category", "type", "amount", "note"]].to_dict("records")
