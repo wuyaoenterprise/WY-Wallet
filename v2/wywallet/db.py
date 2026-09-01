@@ -8,7 +8,15 @@ import pandas as pd
 import streamlit as st
 from supabase import Client, create_client
 
-from .config import DB_BATCH_SIZE, DEFAULT_CATEGORIES, EXPENSE, INCOME, MAX_TRANSACTION_ROWS, today_my
+from .config import (
+    DB_BATCH_SIZE,
+    DEFAULT_CATEGORIES,
+    MAX_TRANSACTION_ROWS,
+    TRANSACTION_TYPES,
+    UI_CACHE_TTL_SECONDS,
+    now_my,
+    today_my,
+)
 
 TX_COLUMNS = ["id", "date", "item", "category", "type", "amount", "note"]
 
@@ -21,7 +29,6 @@ def get_client() -> Client:
 def _fetch_transaction_rows(client: Client, max_rows: int | None = MAX_TRANSACTION_ROWS) -> tuple[list[dict[str, Any]], bool]:
     rows: list[dict[str, Any]] = []
     offset = 0
-    truncated = False
     while max_rows is None or offset < max_rows:
         remaining = DB_BATCH_SIZE if max_rows is None else min(DB_BATCH_SIZE, max_rows - offset)
         if remaining <= 0:
@@ -39,23 +46,23 @@ def _fetch_transaction_rows(client: Client, max_rows: int | None = MAX_TRANSACTI
         if len(batch) < remaining:
             return rows, False
         offset += len(batch)
+    truncated = False
     if max_rows is not None and len(rows) >= max_rows:
         probe = client.table("transactions").select("id").range(max_rows, max_rows).limit(1).execute()
         truncated = bool(probe.data)
     return rows, truncated
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=UI_CACHE_TTL_SECONDS, show_spinner=False)
 def load_raw_transaction_rows() -> dict[str, Any]:
     rows, truncated = _fetch_transaction_rows(get_client())
-    return {"rows": rows, "truncated": truncated}
+    return {"rows": rows, "truncated": truncated, "loaded_at": now_my().isoformat(timespec="seconds")}
 
 
 def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
     issues: list[str] = []
-    raw_id = row.get("id")
     try:
-        tx_id = int(raw_id)
+        tx_id = int(row.get("id"))
     except Exception:
         tx_id = None
         issues.append("id无效")
@@ -63,6 +70,8 @@ def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, l
     parsed_date = pd.to_datetime(row.get("date"), errors="coerce")
     if pd.isna(parsed_date):
         issues.append("日期无效")
+    elif parsed_date.date() > today_my():
+        issues.append("未来日期")
 
     item = str(row.get("item") or "").strip()
     if not item:
@@ -73,7 +82,7 @@ def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, l
         issues.append("类别为空")
 
     tx_type = str(row.get("type") or "").strip()
-    if tx_type not in {EXPENSE, INCOME}:
+    if tx_type not in set(TRANSACTION_TYPES):
         issues.append("类型无效")
 
     amount = pd.to_numeric(row.get("amount"), errors="coerce")
@@ -94,7 +103,7 @@ def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, l
     }, []
 
 
-def split_transaction_rows(rows: Iterable[dict[str,Any]]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def split_transaction_rows(rows: Iterable[dict[str, Any]]) -> tuple[pd.DataFrame, pd.DataFrame]:
     valid: list[dict[str, Any]] = []
     invalid: list[dict[str, Any]] = []
     for raw in rows:
@@ -114,9 +123,50 @@ def split_transaction_rows(rows: Iterable[dict[str,Any]]) -> tuple[pd.DataFrame,
     return valid_frame, invalid_frame
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_category_rows() -> list[str]:
+    response = get_client().table("categories").select("name").execute()
+    values = [str(row.get("name") or "").strip() for row in (response.data or [])]
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
+def fetch_category_rows_fresh() -> list[str]:
+    response = get_client().table("categories").select("name").execute()
+    values = [str(row.get("name") or "").strip() for row in (response.data or [])]
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
+def canonicalize_transaction_categories(frame: pd.DataFrame, registered: list[str] | None = None) -> pd.DataFrame:
+    if frame.empty or "category" not in frame:
+        return frame.copy()
+    work = frame.copy()
+    registered = registered if registered is not None else load_category_rows()
+    canonical: dict[str, str] = {str(value).casefold(): str(value) for value in registered if str(value).strip()}
+    for value in work["category"].fillna("").astype(str):
+        cleaned = value.strip()
+        if cleaned:
+            canonical.setdefault(cleaned.casefold(), cleaned)
+    work["category"] = work["category"].fillna("").astype(str).map(lambda value: canonical.get(value.strip().casefold(), value.strip()))
+    return work
+
+
 def load_transactions() -> pd.DataFrame:
     valid, _ = split_transaction_rows(load_raw_transaction_rows()["rows"])
-    return valid
+    return canonicalize_transaction_categories(valid)
 
 
 def load_invalid_transactions() -> pd.DataFrame:
@@ -128,35 +178,19 @@ def transactions_truncated() -> bool:
     return bool(load_raw_transaction_rows().get("truncated"))
 
 
-def fetch_transactions_fresh() -> tuple[pd.DataFrame, pd.DataFrame, bool]:
-    rows, truncated = _fetch_transaction_rows(get_client(), max_rows=None)
+def data_loaded_at() -> str:
+    return str(load_raw_transaction_rows().get("loaded_at") or "")
+
+
+def fetch_transactions_fresh(*, max_rows: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame, bool]:
+    rows, truncated = _fetch_transaction_rows(get_client(), max_rows=max_rows)
     valid, invalid = split_transaction_rows(rows)
+    valid = canonicalize_transaction_categories(valid, fetch_category_rows_fresh())
     return valid, invalid, truncated
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def load_category_rows() -> list[str]:
-    response = get_client().table("categories").select("name").execute()
-    values = [str(row.get("name") or "").strip() for row in (response.data or [])]
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value and value.casefold() not in seen:
-            seen.add(value.casefold())
-            result.append(value)
-    return result
-
-
-def fetch_category_rows_fresh() -> list[str]:
-    response = get_client().table("categories").select("name").execute()
-    values = [str(row.get("name") or "").strip() for row in (response.data or [])]
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value and value.casefold() not in seen:
-            seen.add(value.casefold())
-            result.append(value)
-    return result
+def fetch_transactions_interactive_fresh() -> tuple[pd.DataFrame, pd.DataFrame, bool]:
+    return fetch_transactions_fresh(max_rows=MAX_TRANSACTION_ROWS)
 
 
 def load_categories(transactions: pd.DataFrame | None = None) -> list[str]:
@@ -164,8 +198,6 @@ def load_categories(transactions: pd.DataFrame | None = None) -> list[str]:
     if transactions is None:
         transactions = load_transactions()
     transaction_values = [] if transactions.empty else [str(v).strip() for v in transactions["category"].dropna() if str(v).strip()]
-    # Defaults are bootstrap choices only. Once the category table contains any
-    # registered categories, deleted/renamed defaults must not silently return.
     source = (registered if registered else DEFAULT_CATEGORIES.copy()) + transaction_values
     seen: set[str] = set()
     merged: list[str] = []
@@ -201,6 +233,9 @@ def normalize_transaction(row: dict[str, Any]) -> dict[str, Any]:
     parsed_date = pd.to_datetime(row.get("date", today_my()), errors="coerce")
     if pd.isna(parsed_date):
         raise ValueError("日期格式无效。")
+    tx_date = parsed_date.date()
+    if tx_date > today_my():
+        raise ValueError("记账模式不允许未来日期；未来支出请在实际发生后再记录。")
     item = str(row.get("item") or "").strip()
     category = str(row.get("category") or "").strip()
     tx_type = str(row.get("type") or "").strip()
@@ -210,12 +245,12 @@ def normalize_transaction(row: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("项目／商家不能为空。")
     if not category:
         raise ValueError("类别不能为空。")
-    if tx_type not in {EXPENSE, INCOME}:
-        raise ValueError("类型必须是 Expense 或 Income。")
+    if tx_type not in set(TRANSACTION_TYPES):
+        raise ValueError("类型必须是 Expense、Income 或 Refund。")
     if pd.isna(amount) or float(amount) <= 0:
         raise ValueError("金额必须大于 0。")
     return {
-        "date": parsed_date.date().isoformat(),
+        "date": tx_date.isoformat(),
         "item": item[:180], "category": category[:80], "type": tx_type,
         "amount": round(float(amount), 2), "note": note[:1000],
     }
@@ -235,14 +270,38 @@ def insert_transactions(rows: Iterable[dict[str, Any]] | pd.DataFrame) -> int:
     return len(records)
 
 
+def _fetch_transaction_by_id(transaction_id: int) -> dict[str, Any] | None:
+    response = get_client().table("transactions").select("id,date,item,category,type,amount,note").eq("id", int(transaction_id)).limit(1).execute()
+    rows = list(response.data or [])
+    return dict(rows[0]) if rows else None
+
+
 def update_transaction(transaction_id: int, row: dict[str, Any]) -> None:
     payload = normalize_transaction(row)
+    if _fetch_transaction_by_id(transaction_id) is None:
+        raise RuntimeError("这笔交易已被其他页面删除或不存在，请刷新后重试。")
     get_client().table("transactions").update(payload).eq("id", int(transaction_id)).execute()
+    after = _fetch_transaction_by_id(transaction_id)
+    if after is None:
+        raise RuntimeError("更新后无法重新读取这笔交易，请刷新确认数据库状态。")
+    normalized_after, issues = _normalize_loaded_row(after)
+    if normalized_after is None or issues:
+        raise RuntimeError("数据库返回的更新结果无效，请刷新确认。")
+    comparable = {k: normalized_after[k] for k in ["item", "category", "type", "amount", "note"]}
+    expected = {k: payload[k] for k in ["item", "category", "type", "amount", "note"]}
+    comparable["date"] = normalized_after["date"].date().isoformat()
+    expected["date"] = payload["date"]
+    if comparable != expected:
+        raise RuntimeError("数据库未完整套用修改，可能发生并发更新；请刷新后重试。")
     invalidate_data()
 
 
 def delete_transaction(transaction_id: int) -> None:
+    if _fetch_transaction_by_id(transaction_id) is None:
+        raise RuntimeError("这笔交易已经不存在，请刷新页面。")
     get_client().table("transactions").delete().eq("id", int(transaction_id)).execute()
+    if _fetch_transaction_by_id(transaction_id) is not None:
+        raise RuntimeError("数据库没有删除这笔交易，请刷新后重试。")
     invalidate_data()
 
 
@@ -267,15 +326,14 @@ class MergeResult:
 
 
 def _delete_empty_category_if_safe(client: Client, name: str) -> bool:
-    count = client.table("transactions").select("id", count="exact").eq("category", name).limit(1).execute()
+    count = client.table("transactions").select("id", count="exact").ilike("category", name).limit(1).execute()
     if int(count.count or len(count.data or [])) == 0:
-        client.table("categories").delete().eq("name", name).execute()
+        client.table("categories").delete().ilike("name", name).execute()
         return True
     return False
 
 
 def merge_category_safely(source: str, target: str) -> MergeResult:
-    """No-data-loss category merge with compensating cleanup around PostgREST calls."""
     source = str(source or "").strip()
     target = str(target or "").strip()
     if not source or not target or source.casefold() == target.casefold():
@@ -284,24 +342,22 @@ def merge_category_safely(source: str, target: str) -> MergeResult:
     registered_rows = load_category_rows()
     registered_map = {value.casefold(): value for value in registered_rows}
     known_map = {value.casefold(): value for value in load_categories(load_transactions())}
-    # Canonicalize case to an already-known category so "Travel" and "travel"
-    # cannot become two different labels merely because the user typed casing.
     target = known_map.get(target.casefold(), target)
     target_created = False
     try:
         if target.casefold() not in registered_map:
             client.table("categories").insert({"name": target[:80]}).execute()
             target_created = True
-        before = client.table("transactions").select("id", count="exact").eq("category", source).execute()
+        before = client.table("transactions").select("id", count="exact").ilike("category", source).execute()
         moved_rows = int(before.count or len(before.data or []))
-        client.table("transactions").update({"category": target}).eq("category", source).execute()
-        remaining = client.table("transactions").select("id", count="exact").eq("category", source).limit(1).execute()
+        client.table("transactions").update({"category": target}).ilike("category", source).execute()
+        remaining = client.table("transactions").select("id", count="exact").ilike("category", source).limit(1).execute()
         if int(remaining.count or len(remaining.data or [])) != 0:
             raise RuntimeError("部分交易仍在原类别；系统已保留两边类别，未删除任何交易。请重试。")
         source_removed = False
         cleanup_note = ""
         try:
-            client.table("categories").delete().eq("name", source).execute()
+            client.table("categories").delete().ilike("name", source).execute()
             source_removed = True
         except Exception:
             cleanup_note = "交易已安全移动，但原类别登记删除失败；它可能暂时以空类别保留。"
