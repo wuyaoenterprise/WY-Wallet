@@ -4,13 +4,17 @@ import io
 
 import pandas as pd
 
-FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+FORMULA_PREFIXES = ("=", "+", "-", "@")
+LEADING_IGNORABLES = "\ufeff\u200b \t\r\n\v\f"
 
 
 def sanitize_spreadsheet_text(value):
     if not isinstance(value, str) or not value:
         return value
-    candidate = value.lstrip("\ufeff")
+    # Spreadsheet engines may ignore leading spaces/control characters before
+    # deciding whether a cell is a formula. Strip them only for detection, then
+    # preserve the original text and prefix an apostrophe when dangerous.
+    candidate = value.lstrip(LEADING_IGNORABLES)
     if candidate.startswith(FORMULA_PREFIXES):
         return "'" + value
     return value
