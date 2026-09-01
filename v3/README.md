@@ -1,34 +1,35 @@
 # WY Wallet V3
 
-Current build: `2026.09.01-v3.1.1 · v3-final-audit-r2`
+Candidate build: `2026.09.01-v3.2.1 · v3-release-candidate-r1`
 
-Deployment: `wuyaoenterprise/WY-Wallet` → branch `agent/wy-wallet-v3` → main file `v3/app.py`.
+Stable live deployment remains on `agent/wy-wallet-v3` until the candidate release gate is fully green. Candidate development happens on `agent/wy-wallet-v3-finalize`.
+
+Deployment entrypoint: `v3/app.py`.
 
 Required service secrets: `SUPABASE_URL`, `SUPABASE_KEY`, `GOOGLE_API_KEY`.
 
-For access protection, configure `WEB_ACCESS_PASSWORD` for a public Streamlit URL. If Streamlit itself already enforces private platform access, explicitly set `ALLOW_UNPROTECTED_ACCESS = true`. If neither is configured, V3 fails closed before loading ledger data.
+For a public Streamlit URL, configure `WEB_ACCESS_PASSWORD`. Only when Streamlit itself already enforces Private access should `ALLOW_UNPROTECTED_ACCESS = true` be used. If neither is configured, V3 fails closed before loading ledger data.
 
-## V3.1.1 final audit fixes
+## V3.2.1 candidate architecture
 
-- Fragment pages reload the shared ledger snapshot internally, avoiding parent-run stale DataFrames while preserving fast local reruns.
-- Current-year AI `average_month` excludes an incomplete current month when completed months exist, matching the report definition.
-- Largest/smallest transaction queries return the concrete transaction date, item and category.
-- Highest/lowest month output respects aggregation units, so count queries display `笔` rather than `RM`.
-- Custom comparison targets persist in conversation state for follow-up questions such as `差多少百分比？`.
-- Gemini planning no longer receives thousands of ledger merchant/item candidate names on every question; exact subject matching happens locally.
-- Simple amount/count/list questions skip the second Gemini explanation call unless an explanation is actually needed.
-- Receipt adjustment fingerprints are based on extracted receipt contents rather than image bytes, reducing duplicate tax/service/discount rows when the same physical receipt is photographed again.
-- If the final fresh duplicate check changes the rows that would be saved, V3 saves nothing and requires reconciliation/confirmation again instead of silently saving a partial receipt.
-- Negative net-expense categories are surfaced as net-refund reconciliation rows rather than disappearing from positive-only quick charts.
-- Prepared backup bundles carry a ledger signature and are invalidated before a later download rerun if another session changed the ledger.
-- Category-merge rollback only changes rows that are still at the merge target, reducing the chance of overwriting a newer concurrent category edit.
-- Password sessions expire after 30 minutes of inactivity and users can manually lock the current session.
-- CI runs on both pull requests and pushes to the V3 branch, on Python 3.12 and 3.14, and includes V3-specific override regressions.
+- V3 executes from its own `v3/wywallet` package; it no longer runs the V2 core.
+- The entrypoint no longer mutates page functions with runtime `setattr` overrides.
+- Startup renders an explicit database-loading state and shows a diagnostic page if Supabase fails instead of leaving a blank screen.
+- Dashboard / Reports / AI stop authoritative calculations if the interactive ledger is truncated above the 100,000-row safety limit.
+- Receipt flow has a dedicated V3 page with mobile-first card editing.
+- Receipt identity is whole-receipt + line-level: a receipt number is preferred when available, otherwise line content is included in the fingerprint; identical repeated receipt lines receive distinct line IDs.
+- Final receipt save performs a fresh database check and never silently writes a partial receipt.
+- AI finance numbers remain Python-authoritative; Gemini 3.7 Flash handles language understanding and receipt extraction.
+- Refund reduces net spending rather than inflating logical V3 income.
+- Historical month-end forecast uses a median remaining-spend estimate and exposes an uncertainty range.
+- Spreadsheet exports neutralize formula-like external text.
 
-## Existing V3 accounting behavior
+## Release policy
 
-Refunds reduce net spending rather than inflating income inside V3. Shared-table refund storage uses a positive-amount marker representation, future dates are excluded from posted analytics, transaction reads use ID keyset pagination, spreadsheet exports neutralize formula-like external text, month-end forecasts use recent historical remaining-day patterns, and authoritative finance numbers are calculated locally in Python while Gemini 3.7 Flash handles language understanding and receipt extraction.
+`v3/RELEASE_GATE.md` is the fixed definition of a release blocker. New audits should not reopen the release for theoretical boundaries or optional UI polish. The live branch is advanced only after Python 3.12 and 3.14 release-gate jobs both pass against the actual V3 entrypoint.
 
-## Remaining external verification
+## Owner / infrastructure actions
 
-The application-layer issues identified in the V3.1 audit are addressed in V3.1.1. The one remaining external boundary is the legacy Web Supabase project's own security configuration: its RLS policies, anon-key permissions, database constraints and indexes cannot be verified or changed from this repository because that Supabase project is not connected to the available management tooling.
+Repository code cannot verify the legacy Web Supabase project's RLS, role permissions, deployed-key privilege level, indexes/constraints, atomic category-merge RPC, optimistic row versioning or database-level backup revision. Those require project-owner access to the actual Supabase project.
+
+GitHub branch protection and Streamlit platform privacy also require account-level administrative actions.
