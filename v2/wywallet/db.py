@@ -346,12 +346,75 @@ class MergeResult:
     cleanup_note: str = ""
 
 
+def _escape_ilike_literal(value: str) -> str:
+    """Escape PostgreSQL LIKE wildcards so category names are treated literally."""
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _casefold_rows(client: Client, table: str, column: str, value: str, select_columns: str) -> list[dict[str, Any]]:
+    """Find case-insensitive literal matches, then verify them exactly in Python.
+
+    ILIKE is only a narrowing read. Mutations never use a wildcard expression.
+    Pagination keeps the result correct even if a category has many transactions.
+    """
+    target_key = str(value).strip().casefold()
+    if not target_key:
+        return []
+    pattern = _escape_ilike_literal(str(value).strip())
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        response = (
+            client.table(table)
+            .select(select_columns)
+            .ilike(column, pattern)
+            .range(offset, offset + DB_BATCH_SIZE - 1)
+            .execute()
+        )
+        batch = list(response.data or [])
+        for row in batch:
+            candidate = str(row.get(column) or "").strip()
+            if candidate and candidate.casefold() == target_key:
+                rows.append(dict(row))
+        if len(batch) < DB_BATCH_SIZE:
+            break
+        offset += len(batch)
+    return rows
+
+
+def _transaction_ids_for_category(client: Client, name: str) -> list[int]:
+    rows = _casefold_rows(client, "transactions", "category", name, "id,category")
+    result: list[int] = []
+    seen: set[int] = set()
+    for row in rows:
+        try:
+            tx_id = int(row.get("id"))
+        except Exception:
+            continue
+        if tx_id not in seen:
+            seen.add(tx_id)
+            result.append(tx_id)
+    return result
+
+
+def _registered_name_variants(client: Client, name: str) -> list[str]:
+    rows = _casefold_rows(client, "categories", "name", name, "name")
+    result: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        candidate = str(row.get("name") or "").strip()
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            result.append(candidate)
+    return result
+
+
 def _delete_empty_category_if_safe(client: Client, name: str) -> bool:
-    count = client.table("transactions").select("id", count="exact").ilike("category", name).limit(1).execute()
-    if int(count.count or len(count.data or [])) == 0:
-        client.table("categories").delete().ilike("name", name).execute()
-        return True
-    return False
+    if _transaction_ids_for_category(client, name):
+        return False
+    # The target was created by this flow, so exact deletion is intentional.
+    client.table("categories").delete().eq("name", name).execute()
+    return True
 
 
 def merge_category_safely(source: str, target: str) -> MergeResult:
@@ -369,18 +432,25 @@ def merge_category_safely(source: str, target: str) -> MergeResult:
         if target.casefold() not in registered_map:
             client.table("categories").insert({"name": target[:80]}).execute()
             target_created = True
-        before = client.table("transactions").select("id", count="exact").ilike("category", source).execute()
-        moved_rows = int(before.count or len(before.data or []))
-        client.table("transactions").update({"category": target}).ilike("category", source).execute()
-        remaining = client.table("transactions").select("id", count="exact").ilike("category", source).limit(1).execute()
-        if int(remaining.count or len(remaining.data or [])) != 0:
+
+        source_ids = _transaction_ids_for_category(client, source)
+        moved_rows = len(source_ids)
+        for start in range(0, len(source_ids), DB_BATCH_SIZE):
+            chunk = source_ids[start:start + DB_BATCH_SIZE]
+            if chunk:
+                client.table("transactions").update({"category": target}).in_("id", chunk).execute()
+
+        remaining_ids = _transaction_ids_for_category(client, source)
+        if remaining_ids:
             raise RuntimeError("部分交易仍在原类别；系统已保留两边类别，未删除任何交易。请重试。")
-        source_removed = False
+
         cleanup_note = ""
+        source_removed = True
         try:
-            client.table("categories").delete().ilike("name", source).execute()
-            source_removed = True
+            for exact_name in _registered_name_variants(client, source):
+                client.table("categories").delete().eq("name", exact_name).execute()
         except Exception:
+            source_removed = False
             cleanup_note = "交易已安全移动，但原类别登记删除失败；它可能暂时以空类别保留。"
         return MergeResult(moved_rows, target_created, source_removed, cleanup_note)
     except Exception:
