@@ -4,8 +4,8 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 APP_TITLE = "WY Wallet V3"
-APP_VERSION = "2026.09.01-v3.1.0"
-BUILD_ID = "v3-final-hardening-r1"
+APP_VERSION = "2026.09.01-v3.1.1"
+BUILD_ID = "v3-final-audit-r2"
 TIMEZONE_NAME = "Asia/Kuala_Lumpur"
 TIMEZONE = ZoneInfo(TIMEZONE_NAME)
 CURRENCY = "MYR"
@@ -25,9 +25,8 @@ AI_RETRY_ATTEMPTS = 3
 AI_MACRO_BATCH_SIZE = 400
 RECEIPT_TOTAL_TOLERANCE = 0.05
 REFUND_DB_MARKER = "[WY_REFUND_V3]"
-# Fragments now handle most click interactions, so a moderate shared cache is
-# enough to avoid repeated Supabase pagination without keeping data stale for
-# several minutes. Every V3 write and explicit refresh invalidates it globally.
+# Fragments handle local interactions while the shared ledger cache is the only
+# cached transaction snapshot. V3 writes and explicit refreshes invalidate it.
 UI_CACHE_TTL_SECONDS = 120
 
 
