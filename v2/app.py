@@ -6,4 +6,5 @@ There is no runtime source rewriting, exec, or monkey-patching.
 
 from wywallet.web import run
 
+# Stabilization audit completed 2026-09-01.
 run()
