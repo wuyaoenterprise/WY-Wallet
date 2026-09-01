@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -25,7 +25,6 @@ def month_slice(frame: pd.DataFrame, year: int, month: int) -> pd.DataFrame:
 
 
 def expense_effect_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    """Return Expense/Refund rows with signed `expense_effect` (refunds reduce spending)."""
     frame = posted_only(frame)
     if frame.empty:
         work = frame.copy()
@@ -170,20 +169,12 @@ def weekday_average(frame: pd.DataFrame, year: int, month: int) -> pd.DataFrame:
     today = today_my()
     month_start = date(int(year), int(month), 1)
     month_end = date(int(year), int(month), calendar.monthrange(int(year), int(month))[1])
-    if month_start > today:
-        effective_end = month_start - pd.Timedelta(days=1)
-    else:
-        effective_end = min(month_end, today)
+    effective_end = min(month_end, today) if month_start <= today else month_start - timedelta(days=1)
     counts = {weekday: 0 for weekday in range(7)}
-    if isinstance(effective_end, pd.Timestamp):
-        effective_end = effective_end.date()
-    if effective_end >= month_start:
-        cursor = month_start
-        while cursor <= effective_end:
-            counts[cursor.weekday()] += 1
-            cursor += pd.Timedelta(days=1)
-            if isinstance(cursor, pd.Timestamp):
-                cursor = cursor.date()
+    cursor = month_start
+    while cursor <= effective_end:
+        counts[cursor.weekday()] += 1
+        cursor += timedelta(days=1)
     return pd.DataFrame([
         {"weekday": w, "星期": names[w], "总支出": float(totals.get(w, 0.0)), "出现次数": counts[w],
          "平均每个该星期": float(totals.get(w, 0.0)) / counts[w] if counts[w] else 0.0}
