@@ -24,6 +24,24 @@ def month_slice(frame: pd.DataFrame, year: int, month: int) -> pd.DataFrame:
     return frame[(frame["date"].dt.year == int(year)) & (frame["date"].dt.month == int(month))].copy()
 
 
+def previous_month(year: int, month: int) -> tuple[int, int]:
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+
+def previous_month_same_elapsed_slice(frame: pd.DataFrame, year: int, month: int, elapsed_day: int) -> pd.DataFrame:
+    """Previous calendar month through the same day number, capped to its last day."""
+    py, pm = previous_month(year, month)
+    end_day = min(max(int(elapsed_day), 1), calendar.monthrange(py, pm)[1])
+    work = posted_only(frame)
+    if work.empty:
+        return work.copy()
+    return work[
+        (work["date"].dt.year == py)
+        & (work["date"].dt.month == pm)
+        & (work["date"].dt.day <= end_day)
+    ].copy()
+
+
 def expense_effect_frame(frame: pd.DataFrame) -> pd.DataFrame:
     frame = posted_only(frame)
     if frame.empty:
@@ -114,10 +132,6 @@ def recent_months_summary(frame: pd.DataFrame, periods: int = 12) -> pd.DataFram
     base = base.merge(grouped, on="period", how="left")
     base["支出"] = base["支出"].fillna(0.0)
     return base
-
-
-def previous_month(year: int, month: int) -> tuple[int, int]:
-    return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
 def _safe_anniversary(value: date, year: int) -> date:
