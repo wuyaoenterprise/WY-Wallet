@@ -25,13 +25,6 @@ def _positive_money(value: Any) -> float:
 
 
 def _duplicate_key(normalized: dict[str, Any]) -> tuple[str, str, str, float]:
-    """Receipt duplicate identity intentionally ignores category.
-
-    Category is an AI/user classification and can legitimately differ between
-    two otherwise identical representations of the same receipt line. Using it
-    as part of duplicate identity allows the same transaction to slip through
-    merely because it was classified differently.
-    """
     return (
         str(normalized["date"]),
         str(normalized["item"]).strip().casefold(),
@@ -44,8 +37,6 @@ def _coerce_existing_duplicate_keys(existing_keys: set[tuple]) -> set[tuple[str,
     result: set[tuple[str, str, str, float]] = set()
     for key in existing_keys:
         if len(key) == 5:
-            # Legacy db.transaction_key shape:
-            # date, item, category, type, amount
             result.add((str(key[0]), str(key[1]).casefold(), str(key[3]), round(float(key[4]), 2)))
         elif len(key) == 4:
             result.add((str(key[0]), str(key[1]).casefold(), str(key[2]), round(float(key[3]), 2)))
@@ -59,28 +50,28 @@ def materialize_receipt_adjustments(
     service_charge: float = 0.0,
     discount: float = 0.0,
     fallback_category: str = "其他",
+    receipt_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Turn receipt metadata into visible/editable ledger rows.
 
-    Receipt reconciliation is not enough by itself: charges that contribute to
-    the paid total must also be saved. These generated rows are deliberately
-    visible in the editor so the user can change their date/category, uncheck
-    them, or correct an OCR mistake before saving.
+    A short receipt fingerprint is appended to generated adjustment item names.
+    That prevents two different receipts on the same day with the same SST or
+    service-charge amount from being incorrectly treated as duplicates.
     """
     rows = [dict(row) for row in transactions]
     if not rows:
         return rows
 
     first_date = next((row.get("date") for row in rows if row.get("date")), None)
-    categories = [str(row.get("category") or "").strip() for row in rows if str(row.get("category") or "").strip()]
-    category = pd.Series(categories).mode().iloc[0] if categories else fallback_category
+    category = fallback_category
+    suffix = f" · {str(receipt_id)[:8]}" if receipt_id else ""
 
     def add(item: str, tx_type: str, amount: float, note: str) -> None:
         if amount <= RECEIPT_TOTAL_TOLERANCE:
             return
         rows.append({
             "date": first_date,
-            "item": item,
+            "item": item + suffix,
             "category": category,
             "type": tx_type,
             "amount": amount,
@@ -151,8 +142,6 @@ def reconcile_receipt_total(
         return None
     expense = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == EXPENSE)
     refund = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == REFUND)
-    # Income is not expected from receipt extraction, but keep a defensive reversal
-    # if an older session contains one.
     income = sum(c.normalized["amount"] for c in candidates if c.normalized["type"] == INCOME)
     item_total = round(expense - refund - income, 2)
     tax = round(max(float(tax or 0), 0.0), 2)
