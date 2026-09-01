@@ -26,6 +26,8 @@ V2 no longer rewrites Python source at runtime and no longer uses `exec`, Stream
 - `v2/pages/1_📷AI收据识别.py` — dedicated receipt workflow
 - `v2/tests/test_core.py` — finance and validation regression tests
 
+Legacy `v2/app_core.py` and `v2/app_rich.py` were physically removed, so deleted import features and old AI model calls cannot reappear through an incorrect entry point.
+
 ## Data correctness and safety
 
 - Supabase transaction reads paginate in 1,000-row batches up to 100,000 rows.
@@ -36,7 +38,7 @@ V2 no longer rewrites Python source at runtime and no longer uses `exec`, Stream
 - Database errors are cleared after a successful read.
 - A manual refresh button invalidates shared caches.
 - Backups include `Transactions`, `Categories`, and `Metadata` sheets.
-- Historical data import has been removed from V2.
+- Historical data import has been physically removed from V2.
 
 ## AI
 
@@ -44,9 +46,11 @@ All AI calls use stable `gemini-3.7-flash` through `google-genai`.
 
 Finance chat no longer sends a duplicated full ledger on every question. Gemini first converts the conversation into a structured query plan (topic, metric, year, month range and exact matching ledger labels). Pandas then calculates authoritative amounts locally. Gemini receives only the calculated result for the final natural-language answer.
 
-Conversation state stores the resolved subject and time scope, so follow-ups such as `1到8月分别多少？`, `哪个月最高？`, and `那2025呢？` preserve the previous topic unless the user explicitly changes it.
+Conversation state stores the resolved subject and time scope, so follow-ups such as `1到8月分别多少？`, `哪个月最高？`, and `那2025呢？` preserve the previous topic unless the user explicitly changes it. Chat state is reset when the selected year or underlying ledger signature changes.
 
-Receipt recognition uses structured output, human review, final validation, duplicate checks after editing, a fresh duplicate check immediately before insert, and shared cache invalidation.
+Ledger strings are explicitly treated as untrusted data in AI system instructions to reduce prompt-injection risk.
+
+Receipt recognition uses structured output, human review, final validation, duplicate checks after editing, duplicate detection within the candidate batch, a fresh duplicate check immediately before insert, and shared cache invalidation.
 
 ## Reports and UX
 
@@ -58,7 +62,10 @@ Receipt recognition uses structured output, human review, final validation, dupl
 - Weekday analysis uses average spending per occurrence of each weekday instead of raw weekday totals.
 - Recurring-expense detection combines month coverage, amount stability and time cadence so frequent daily purchases are not automatically labelled subscriptions.
 - Anomaly detection compares transactions within their own category.
+- User transaction values rendered in custom HTML are escaped.
 
 ## Validation
 
 GitHub Actions tests both Python 3.12 and 3.14. CI installs all dependencies, compiles V2, rejects the legacy Gemini SDK/runtime source rewriting, runs core unit tests, and smoke-imports the application modules.
+
+The stabilization workflow currently passes on both supported Python versions.
