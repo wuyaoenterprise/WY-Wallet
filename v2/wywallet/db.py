@@ -12,8 +12,10 @@ from .config import (
     DB_BATCH_SIZE,
     DEFAULT_CATEGORIES,
     EXPENSE,
+    INCOME,
     MAX_TRANSACTION_ROWS,
     REFUND,
+    REFUND_DB_MARKER,
     TRANSACTION_TYPES,
     UI_CACHE_TTL_SECONDS,
     now_my,
@@ -29,29 +31,51 @@ def get_client() -> Client:
 
 
 def _fetch_transaction_rows(client: Client, max_rows: int | None = MAX_TRANSACTION_ROWS) -> tuple[list[dict[str, Any]], bool]:
+    """Read a stable ledger snapshot with ID keyset pagination.
+
+    Offset pagination can skip/duplicate rows when another writer inserts while a
+    long backup is being read. IDs are immutable, so walking `id < cursor` gives
+    a stable traversal even while new rows are appended concurrently.
+    """
     rows: list[dict[str, Any]] = []
-    offset = 0
-    while max_rows is None or offset < max_rows:
-        remaining = DB_BATCH_SIZE if max_rows is None else min(DB_BATCH_SIZE, max_rows - offset)
+    cursor: int | None = None
+    while max_rows is None or len(rows) < max_rows:
+        remaining = DB_BATCH_SIZE if max_rows is None else min(DB_BATCH_SIZE, max_rows - len(rows))
         if remaining <= 0:
             break
-        response = (
+        query = (
             client.table("transactions")
             .select("id,date,item,category,type,amount,note")
-            .order("date", desc=True)
             .order("id", desc=True)
-            .range(offset, offset + remaining - 1)
-            .execute()
+            .limit(remaining)
         )
+        if cursor is not None:
+            query = query.lt("id", cursor)
+        response = query.execute()
         batch = list(response.data or [])
+        if not batch:
+            return rows, False
         rows.extend(batch)
+        ids = []
+        for row in batch:
+            try:
+                ids.append(int(row.get("id")))
+            except Exception:
+                continue
+        if not ids:
+            return rows, False
+        cursor = min(ids)
         if len(batch) < remaining:
             return rows, False
-        offset += len(batch)
+
     truncated = False
-    if max_rows is not None and len(rows) >= max_rows:
-        probe = client.table("transactions").select("id").range(max_rows, max_rows).limit(1).execute()
-        truncated = bool(probe.data)
+    if max_rows is not None and rows and len(rows) >= max_rows:
+        try:
+            last_id = min(int(row["id"]) for row in rows if row.get("id") is not None)
+            probe = client.table("transactions").select("id").lt("id", last_id).order("id", desc=True).limit(1).execute()
+            truncated = bool(probe.data)
+        except Exception:
+            truncated = True
     return rows, truncated
 
 
@@ -59,6 +83,13 @@ def _fetch_transaction_rows(client: Client, max_rows: int | None = MAX_TRANSACTI
 def load_raw_transaction_rows() -> dict[str, Any]:
     rows, truncated = _fetch_transaction_rows(get_client())
     return {"rows": rows, "truncated": truncated, "loaded_at": now_my().isoformat(timespec="seconds")}
+
+
+def _strip_refund_marker(note: str) -> tuple[str, bool]:
+    raw = str(note or "")
+    if raw.startswith(REFUND_DB_MARKER):
+        return raw[len(REFUND_DB_MARKER):].lstrip(), True
+    return raw, False
 
 
 def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
@@ -85,13 +116,18 @@ def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, l
 
     raw_type = str(row.get("type") or "").strip()
     raw_amount = pd.to_numeric(row.get("amount"), errors="coerce")
+    note, marker_refund = _strip_refund_marker(str(row.get("note") or ""))
     tx_type = raw_type
     amount = raw_amount
 
-    # Shared-table compatibility: legacy production only understands Expense/Income.
-    # V2 therefore stores a refund physically as Expense with a negative amount,
-    # while exposing it logically as Refund with a positive absolute amount.
-    if not pd.isna(raw_amount) and raw_type == EXPENSE and float(raw_amount) < 0:
+    # V3 schema-safe refund representation: physical Income + positive amount +
+    # marker in note. It works even when the shared table has CHECK(amount > 0)
+    # and still keeps legacy-site net balance direction correct. Older V3/V2
+    # negative-Expense refunds remain readable for backward compatibility.
+    if marker_refund and raw_type == INCOME and not pd.isna(raw_amount):
+        tx_type = REFUND
+        amount = abs(float(raw_amount))
+    elif not pd.isna(raw_amount) and raw_type == EXPENSE and float(raw_amount) < 0:
         tx_type = REFUND
         amount = abs(float(raw_amount))
 
@@ -100,7 +136,6 @@ def _normalize_loaded_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, l
     if pd.isna(amount) or float(amount) <= 0:
         issues.append("金额无效")
 
-    note = str(row.get("note") or "")
     if issues:
         return None, issues
     return {
@@ -234,6 +269,7 @@ def invalidate_data() -> None:
     load_raw_transaction_rows.clear()
     load_category_rows.clear()
     st.session_state["data_revision"] = int(st.session_state.get("data_revision", 0)) + 1
+    st.session_state.pop("backup_bundle", None)
 
 
 def refresh_data() -> None:
@@ -270,8 +306,10 @@ def normalize_transaction(row: dict[str, Any]) -> dict[str, Any]:
 def _encode_transaction_for_db(logical: dict[str, Any]) -> dict[str, Any]:
     payload = dict(logical)
     if payload.get("type") == REFUND:
-        payload["type"] = EXPENSE
-        payload["amount"] = -abs(float(payload["amount"]))
+        payload["type"] = INCOME
+        payload["amount"] = abs(float(payload["amount"]))
+        user_note = str(payload.get("note") or "").strip()
+        payload["note"] = f"{REFUND_DB_MARKER} {user_note}".rstrip()
     return payload
 
 
@@ -347,16 +385,10 @@ class MergeResult:
 
 
 def _escape_ilike_literal(value: str) -> str:
-    """Escape PostgreSQL LIKE wildcards so category names are treated literally."""
     return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _casefold_rows(client: Client, table: str, column: str, value: str, select_columns: str) -> list[dict[str, Any]]:
-    """Find case-insensitive literal matches, then verify them exactly in Python.
-
-    ILIKE is only a narrowing read. Mutations never use a wildcard expression.
-    Pagination keeps the result correct even if a category has many transactions.
-    """
     target_key = str(value).strip().casefold()
     if not target_key:
         return []
@@ -412,7 +444,6 @@ def _registered_name_variants(client: Client, name: str) -> list[str]:
 def _delete_empty_category_if_safe(client: Client, name: str) -> bool:
     if _transaction_ids_for_category(client, name):
         return False
-    # The target was created by this flow, so exact deletion is intentional.
     client.table("categories").delete().eq("name", name).execute()
     return True
 
@@ -428,21 +459,22 @@ def merge_category_safely(source: str, target: str) -> MergeResult:
     known_map = {value.casefold(): value for value in load_categories(load_transactions())}
     target = known_map.get(target.casefold(), target)
     target_created = False
+    moved_ids: list[int] = []
     try:
         if target.casefold() not in registered_map:
             client.table("categories").insert({"name": target[:80]}).execute()
             target_created = True
 
         source_ids = _transaction_ids_for_category(client, source)
-        moved_rows = len(source_ids)
         for start in range(0, len(source_ids), DB_BATCH_SIZE):
             chunk = source_ids[start:start + DB_BATCH_SIZE]
             if chunk:
                 client.table("transactions").update({"category": target}).in_("id", chunk).execute()
+                moved_ids.extend(chunk)
 
         remaining_ids = _transaction_ids_for_category(client, source)
         if remaining_ids:
-            raise RuntimeError("部分交易仍在原类别；系统已保留两边类别，未删除任何交易。请重试。")
+            raise RuntimeError("部分交易仍在原类别，正在尝试自动回滚。")
 
         cleanup_note = ""
         source_removed = True
@@ -452,13 +484,23 @@ def merge_category_safely(source: str, target: str) -> MergeResult:
         except Exception:
             source_removed = False
             cleanup_note = "交易已安全移动，但原类别登记删除失败；它可能暂时以空类别保留。"
-        return MergeResult(moved_rows, target_created, source_removed, cleanup_note)
-    except Exception:
+        return MergeResult(len(source_ids), target_created, source_removed, cleanup_note)
+    except Exception as exc:
+        rollback_error = None
+        if moved_ids:
+            try:
+                for start in range(0, len(moved_ids), DB_BATCH_SIZE):
+                    chunk = moved_ids[start:start + DB_BATCH_SIZE]
+                    client.table("transactions").update({"category": source}).in_("id", chunk).execute()
+            except Exception as rollback_exc:
+                rollback_error = rollback_exc
         if target_created:
             try:
                 _delete_empty_category_if_safe(client, target)
             except Exception:
                 pass
+        if rollback_error is not None:
+            raise RuntimeError(f"类别合并失败，且自动回滚未完全成功：{rollback_error}。请刷新后检查数据。") from exc
         raise
     finally:
         invalidate_data()
