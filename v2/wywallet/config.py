@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 APP_TITLE = "WY Wallet V2"
@@ -17,6 +17,9 @@ ADD_CATEGORY_OPTION = "＋ 新增类别"
 MONTH_LABELS = [f"{month}月" for month in range(1, 13)]
 DB_BATCH_SIZE = 1000
 MAX_TRANSACTION_ROWS = 100_000
+AI_RETRY_ATTEMPTS = 3
+AI_MACRO_BATCH_SIZE = 400
+RECEIPT_TOTAL_TOLERANCE = 0.05
 
 
 def now_my() -> datetime:
