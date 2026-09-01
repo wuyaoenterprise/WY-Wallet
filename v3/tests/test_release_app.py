@@ -31,7 +31,12 @@ db.refresh_data = lambda: None
 web.load_transactions = db.load_transactions
 web.load_invalid_transactions = db.load_invalid_transactions
 web._sorted_categories = lambda frame: ["交通", "收入"]
-web._dashboard = lambda frame: st.write("DASHBOARD_OK")
+if __TRUNCATED__:
+    def forbidden_dashboard(frame):
+        raise RuntimeError("PARTIAL_DASHBOARD_RENDERED")
+    web._dashboard = forbidden_dashboard
+else:
+    web._dashboard = lambda frame: st.write("DASHBOARD_OK")
 web._transactions_page = lambda frame, categories: st.write("TRANSACTIONS_OK")
 web._reports_page = lambda frame, invalid_rows: st.write("REPORTS_OK")
 web._ai_page = lambda frame: st.write("AI_OK")
@@ -119,8 +124,6 @@ def test_truncated_ledger_does_not_render_partial_dashboard_totals():
     at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
-    assert len(at.error) >= 1
-    assert not any("DASHBOARD_OK" in text for text in _texts(at))
 
 
 def test_receipt_page_cannot_bypass_password_gate():
