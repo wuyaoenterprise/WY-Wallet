@@ -11,6 +11,7 @@ import wywallet.web as web
 transactions = pd.DataFrame([
     {"id": 1, "date": "2026-08-10", "item": "Petrol", "category": "交通", "type": "Expense", "amount": 75.0, "note": ""},
     {"id": 2, "date": "2026-08-20", "item": "Salary", "category": "收入", "type": "Income", "amount": 3000.0, "note": ""},
+    {"id": 3, "date": "2026-08-25", "item": "Petrol refund", "category": "交通", "type": "Refund", "amount": 10.0, "note": ""},
 ])
 transactions["date"] = pd.to_datetime(transactions["date"])
 invalid = pd.DataFrame(columns=["id", "date", "item", "category", "type", "amount", "note", "issues"])
@@ -18,6 +19,9 @@ invalid = pd.DataFrame(columns=["id", "date", "item", "category", "type", "amoun
 web.load_transactions = lambda: transactions.copy()
 web.load_invalid_transactions = lambda: invalid.copy()
 web._sorted_categories = lambda frame: ["交通", "收入"]
+web.load_categories = lambda frame=None: ["交通", "收入"]
+web.load_category_rows = lambda: ["交通", "收入"]
+web.unregistered_categories = lambda frame=None: []
 web.transactions_truncated = lambda: False
 web.data_loaded_at = lambda: "2026-09-01T14:00:00+08:00"
 web.refresh_data = lambda: None
@@ -31,20 +35,29 @@ def _markdown_texts(at: AppTest) -> list[str]:
     return [str(element.value) for element in at.markdown]
 
 
-def test_main_app_renders_and_navigation_switches_without_runtime_exception():
-    at = AppTest.from_string(FAKE_APP, default_timeout=20)
+def _navigation(at: AppTest):
+    assert len(at.radio) >= 1
+    return at.radio[0]
+
+
+def test_main_app_renders_and_every_navigation_route_smokes():
+    at = AppTest.from_string(FAKE_APP, default_timeout=25)
     at.run()
     assert not at.exception
     assert any("财务总览" in text for text in _markdown_texts(at))
     assert len(at.metric) >= 5
-    assert len(at.radio) >= 1
 
-    # Streamlit's AppTest exposes the radio's original values even when a
-    # format_func decorates what the user sees. Select the app's raw value.
-    navigation = at.radio[0]
-    navigation.set_value("交易记录").run()
-    assert not at.exception
-    assert any("交易记录" in text for text in _markdown_texts(at))
+    expected = {
+        "交易记录": "交易记录",
+        "分析报表": "分析报表",
+        "AI 洞察": "AI 洞察",
+        "设置与备份": "设置与备份",
+        "总览": "财务总览",
+    }
+    for route, marker in expected.items():
+        _navigation(at).set_value(route).run()
+        assert not at.exception, f"route {route} raised: {at.exception}"
+        assert any(marker in text for text in _markdown_texts(at)), route
 
 
 def test_main_app_password_gate_blocks_data_until_authenticated():
