@@ -1,0 +1,56 @@
+name: Mobile app CI
+
+on:
+  push:
+    branches:
+      - mobile/google-auth-app-v1
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MOBILE_SUPABASE_URL: https://ggnmbgiaqhftilqtlslg.supabase.co
+  MOBILE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_UO8q3y5QEcIBZRctYqIM1w_bzIAtAgL
+
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android shell
+        run: |
+          rm -rf .mobile_build
+          flutter create .mobile_build --platforms=android --org com.wuyaoenterprise --project-name wywallet
+          rm -rf .mobile_build/test
+          cp mobile/pubspec.yaml .mobile_build/pubspec.yaml
+          cp mobile/analysis_options.yaml .mobile_build/analysis_options.yaml
+          mkdir -p .mobile_build/lib
+          base64 -d mobile/source/main.dart.gz.b64 | gunzip > .mobile_build/lib/main.dart
+          mkdir -p .mobile_build/tool
+          cp mobile/tool/patch_android.py .mobile_build/tool/patch_android.py
+          python .mobile_build/tool/patch_android.py
+      - name: Install dependencies
+        working-directory: .mobile_build
+        run: flutter pub get
+      - name: Analyze
+        working-directory: .mobile_build
+        run: flutter analyze --no-fatal-infos
+      - name: Build connected debug APK
+        working-directory: .mobile_build
+        run: |
+          flutter build apk --debug \
+            --dart-define=SUPABASE_URL="$MOBILE_SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$MOBILE_SUPABASE_PUBLISHABLE_KEY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wy-wallet-mobile-connected-debug
+          path: .mobile_build/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 14
