@@ -164,9 +164,9 @@ def load_categories(transactions: pd.DataFrame | None = None) -> list[str]:
     if transactions is None:
         transactions = load_transactions()
     transaction_values = [] if transactions.empty else [str(v).strip() for v in transactions["category"].dropna() if str(v).strip()]
-    source = registered + transaction_values
-    if not source:
-        source = DEFAULT_CATEGORIES.copy()
+    # Defaults are bootstrap choices only. Once the category table contains any
+    # registered categories, deleted/renamed defaults must not silently return.
+    source = (registered if registered else DEFAULT_CATEGORIES.copy()) + transaction_values
     seen: set[str] = set()
     merged: list[str] = []
     for value in source:
@@ -281,10 +281,15 @@ def merge_category_safely(source: str, target: str) -> MergeResult:
     if not source or not target or source.casefold() == target.casefold():
         raise ValueError("请选择不同的原类别和目标类别。")
     client = get_client()
-    registered = {value.casefold() for value in load_category_rows()}
+    registered_rows = load_category_rows()
+    registered_map = {value.casefold(): value for value in registered_rows}
+    known_map = {value.casefold(): value for value in load_categories(load_transactions())}
+    # Canonicalize case to an already-known category so "Travel" and "travel"
+    # cannot become two different labels merely because the user typed casing.
+    target = known_map.get(target.casefold(), target)
     target_created = False
     try:
-        if target.casefold() not in registered:
+        if target.casefold() not in registered_map:
             client.table("categories").insert({"name": target[:80]}).execute()
             target_created = True
         before = client.table("transactions").select("id", count="exact").eq("category", source).execute()
