@@ -6,11 +6,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED_WEB_CORE = ROOT / "v2"
-if str(SHARED_WEB_CORE) not in sys.path:
-    sys.path.insert(0, str(SHARED_WEB_CORE))
+V3_ROOT = ROOT / "v3"
+for path in (SHARED_WEB_CORE, V3_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
-# The V3 branch keeps one tested web-core package instead of duplicating finance
-# logic between V2- and V3-named folders. This entrypoint always executes the
-# hardened V3.1 receipt implementation from that shared package; branding,
-# access gate and build/version values are all V3.
+from v3_overrides import apply_overrides, expire_access_session_if_needed, render_session_controls
+
+apply_overrides()
+expire_access_session_if_needed()
 runpy.run_path(str(SHARED_WEB_CORE / "pages" / "1_📷AI收据识别.py"), run_name="__main__")
+render_session_controls()
