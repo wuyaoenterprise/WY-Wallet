@@ -3,9 +3,7 @@ name: V3 dependency, regression and Streamlit smoke check
 on:
   pull_request:
     paths:
-      - "v2/**/*.py"
       - "v3/**/*.py"
-      - "v2/requirements.txt"
       - "v3/requirements.txt"
       - ".streamlit/config.toml"
       - ".github/workflows/v2-syntax-check.yml"
@@ -13,9 +11,7 @@ on:
     branches:
       - "agent/wy-wallet-v3"
     paths:
-      - "v2/**/*.py"
       - "v3/**/*.py"
-      - "v2/requirements.txt"
       - "v3/requirements.txt"
       - ".streamlit/config.toml"
       - ".github/workflows/v2-syntax-check.yml"
@@ -36,37 +32,44 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
-          cache-dependency-path: |
-            v2/requirements.txt
-            v3/requirements.txt
+          cache-dependency-path: v3/requirements.txt
       - name: Install V3 dependencies
         run: |
           python -m pip install -r v3/requirements.txt
           python -m pip install pytest
           python -m pip check
-      - name: Compile shared core and V3 entry files
-        run: python -m compileall -q v2 v3
-      - name: Reject legacy, stale-branding or deprecated runtime paths
+      - name: Compile V3 application
+        run: python -m compileall -q v3
+      - name: Reject legacy, V2-coupled or monkey-patched runtime paths
         run: |
-          ! grep -R "google.generativeai" v2 v3 --include='*.py'
-          ! grep -R "exec(compile" v2 v3 --include='*.py'
-          ! grep -R "source.replace" v2 v3 --include='*.py'
-          ! grep -R "selection_mode=\"single-row\"" v2/wywallet/web.py
-          ! grep -R "use_container_width" v2 v3 --include='*.py'
-          ! grep -R "个人财务中心 · V2" v2/wywallet/web.py v3 --include='*.py'
-          ! grep -R "WY_Wallet_V2_" v2/wywallet/web.py v3 --include='*.py'
-          ! grep -q 'candidate_items' v3/v3_overrides.py
-          grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v2/wywallet/config.py
-          grep -q 'APP_TITLE = "WY Wallet V3"' v2/wywallet/config.py
-          grep -q 'APP_VERSION = "2026.09.01-v3.1.1"' v2/wywallet/config.py
-          grep -q 'BUILD_ID = "v3-final-audit-r2"' v2/wywallet/config.py
+          ! grep -R "google.generativeai" v3 --include='*.py'
+          ! grep -R "exec(compile" v3 --include='*.py'
+          ! grep -R "source.replace" v3 --include='*.py'
+          ! grep -R "use_container_width" v3 --include='*.py'
+          ! grep -R "个人财务中心 · V2" v3 --include='*.py'
+          ! grep -R "WY_Wallet_V2_" v3 --include='*.py'
+          ! grep -R "v3_overrides" v3 --include='*.py'
+          ! grep -R 'ROOT / "v2"' v3 --include='*.py'
+          ! grep -R "SHARED_WEB_CORE" v3 --include='*.py'
+          ! grep -R "runpy.run_path" v3 --include='*.py'
+          grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v3/wywallet/config.py
+          grep -q 'APP_TITLE = "WY Wallet V3"' v3/wywallet/config.py
+          grep -q 'APP_VERSION = "2026.09.01-v3.2.0"' v3/wywallet/config.py
+          grep -q 'BUILD_ID = "v3-final-hardening-r3"' v3/wywallet/config.py
           grep -q 'showSidebarNavigation = false' .streamlit/config.toml
-          grep -q 'apply_overrides()' v3/app.py
-      - name: Run regression, V3 override and Streamlit AppTest suites
+      - name: Run shared finance and AI regressions against V3 core
         env:
-          PYTHONPATH: v2:v3
-        run: pytest -q v2/tests v3/tests
-      - name: Import application modules
+          PYTHONPATH: v3
+        run: pytest -q v2/tests/test_core.py v2/tests/test_ai_edge_semantics.py v2/tests/test_category_merge_literals.py
+      - name: Run V3.2 direct-core regressions
         env:
-          PYTHONPATH: v2:v3
-        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui, wywallet.receipt, wywallet.exporting, v3_overrides"
+          PYTHONPATH: v3
+        run: pytest -q v3/tests/test_v3_final_overrides.py
+      - name: Run V3 Streamlit AppTests
+        env:
+          PYTHONPATH: v3
+        run: pytest -q v3/tests/test_streamlit_ui.py
+      - name: Import V3 application modules
+        env:
+          PYTHONPATH: v3
+        run: python -c "import wywallet.web, wywallet.ai, wywallet.db, wywallet.analytics, wywallet.ui, wywallet.receipt, wywallet.exporting"
