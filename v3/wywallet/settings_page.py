@@ -9,9 +9,9 @@ import streamlit as st
 from . import db
 from .access import touch_access
 from .backup import database_revision, full_backup_snapshot
-from .config import APP_VERSION, BACKUP_BUNDLE_TTL_SECONDS, EXPENSE, REFUND, TIMEZONE_NAME, TRANSACTION_TYPES, TYPE_LABELS, now_my, today_my
+from .config import APP_VERSION, BACKUP_BUNDLE_TTL_SECONDS, EXPENSE, INCOME, REFUND, TIMEZONE_NAME, TRANSACTION_TYPES, TYPE_LABELS, now_my, today_my
 from .exporting import build_backup_excel, safe_csv_bytes
-from .ledger_codec import logical_type, physical_payload
+from .ledger_codec import decode_legacy_note, logical_type, physical_payload
 from .ui import page_header, section_title
 from .ux import ranked_categories
 
@@ -71,7 +71,7 @@ def _category_section(transactions: pd.DataFrame, categories: list[str]) -> None
     left, right = st.columns(2, gap="large")
     with left:
         section_title("新增类别")
-        name = st.text_input("类别名称", key="release_new_category")
+        name = st.text_input("类别名称", max_chars=80, key="release_new_category")
         if st.button("新增类别", type="primary", width="stretch", key="release_create_category"):
             try:
                 st.toast("类别已建立" if db.create_category(name) else "类别已存在")
@@ -91,7 +91,7 @@ def _category_section(transactions: pd.DataFrame, categories: list[str]) -> None
         target = (
             st.selectbox("目标类别", choices, key="release_merge_target")
             if mode == "现有类别" and choices
-            else st.text_input("新类别名称", key="release_merge_new")
+            else st.text_input("新类别名称", max_chars=80, key="release_merge_new")
         )
         target_text = str(target or "").strip()
         same_target = bool(target_text) and target_text.casefold() == source.casefold()
@@ -128,17 +128,23 @@ def _repair_invalid_dialog(raw_row: dict) -> None:
     parsed_amount = pd.to_numeric(raw_row.get("amount"), errors="coerce")
     default_amount = abs(float(parsed_amount)) if not pd.isna(parsed_amount) and float(parsed_amount) != 0 else 0.01
     raw_type = str(raw_row.get("type") or "")
+    clean_note, legacy_refund, legacy_receipt_id = decode_legacy_note(raw_row.get("note"))
     structured_type = logical_type(raw_type, str(raw_row.get("flow_subtype") or ""))
-    default_type = REFUND if raw_type == EXPENSE and not pd.isna(parsed_amount) and float(parsed_amount) < 0 else (structured_type if structured_type in TRANSACTION_TYPES else EXPENSE)
+    negative_expense = raw_type == EXPENSE and not pd.isna(parsed_amount) and float(parsed_amount) < 0
+    if (raw_type == INCOME and legacy_refund) or negative_expense:
+        default_type = REFUND
+    else:
+        default_type = structured_type if structured_type in TRANSACTION_TYPES else EXPENSE
+    receipt_id = str(raw_row.get("receipt_id") or legacy_receipt_id or "")
 
     st.caption(f"当前问题：{raw_row.get('issues', '')}")
     c1, c2 = st.columns(2)
     tx_date = c1.date_input("日期", value=default_date, max_value=today_my(), key=f"release_repair_date_{tx_id}")
     tx_type = c2.selectbox("类型", TRANSACTION_TYPES, index=TRANSACTION_TYPES.index(default_type), format_func=lambda value: TYPE_LABELS[value], key=f"release_repair_type_{tx_id}")
-    item = st.text_input("项目／商家", value=str(raw_row.get("item") or ""), key=f"release_repair_item_{tx_id}")
-    category = st.text_input("类别", value=str(raw_row.get("category") or ""), key=f"release_repair_cat_{tx_id}")
+    item = st.text_input("项目／商家", value=str(raw_row.get("item") or ""), max_chars=180, key=f"release_repair_item_{tx_id}")
+    category = st.text_input("类别", value=str(raw_row.get("category") or ""), max_chars=80, key=f"release_repair_cat_{tx_id}")
     amount = st.number_input("金额", min_value=0.01, step=0.01, value=default_amount, key=f"release_repair_amount_{tx_id}")
-    note = st.text_area("备注", value=str(raw_row.get("note") or ""), key=f"release_repair_note_{tx_id}")
+    note = st.text_area("备注", value=clean_note, max_chars=1000, key=f"release_repair_note_{tx_id}")
 
     if not st.button("保存修复", type="primary", width="stretch", key=f"release_repair_submit_{tx_id}"):
         return
@@ -150,7 +156,7 @@ def _repair_invalid_dialog(raw_row: dict) -> None:
             "type": tx_type,
             "amount": amount,
             "note": note,
-            "receipt_id": str(raw_row.get("receipt_id") or ""),
+            "receipt_id": receipt_id,
         })
         payload = physical_payload(logical, str(raw_row.get("flow_subtype") or ""))
         db.get_client().rpc("wy_wallet_update_transaction", {
