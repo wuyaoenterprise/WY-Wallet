@@ -14,9 +14,10 @@ import pandas as pd
 import streamlit as st
 import wywallet.db as db
 import wywallet.snapshot as snapshot_mod
-import wywallet.web as web
 import wywallet.ai_page as ai_page
 import wywallet.dashboard_page as dashboard_page
+import wywallet.reports_page as reports_page
+import wywallet.settings_page as settings_page
 import wywallet.transactions_page as transactions_page
 
 transactions = pd.DataFrame([
@@ -48,8 +49,8 @@ else:
     dashboard_page.render = lambda frame: st.write("DASHBOARD_OK")
 transactions_page.render = lambda frame, categories: st.write("TRANSACTIONS_OK")
 ai_page.render = lambda frame: st.write("AI_OK")
-web._reports_page = lambda frame, invalid_rows: st.write("REPORTS_OK")
-web._settings_page = lambda frame, invalid_rows, categories: st.write("SETTINGS_OK")
+reports_page.render = lambda frame, invalid_rows: st.write("REPORTS_OK")
+settings_page.render = lambda frame, invalid_rows, categories: st.write("SETTINGS_OK")
 st.page_link = lambda *args, **kwargs: None
 
 ROUTE = __ROUTE__
@@ -98,7 +99,7 @@ def test_actual_v3_entrypoint_renders_dashboard_with_fake_database():
     assert any("DASHBOARD_OK" in text for text in _texts(at))
 
 
-def test_actual_v3_entrypoint_routes_to_fragment_page():
+def test_actual_v3_entrypoint_routes_to_transaction_page():
     at = AppTest.from_string(_script("交易记录"), default_timeout=25)
     at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
@@ -112,6 +113,14 @@ def test_actual_v3_entrypoint_routes_to_hardened_ai_page():
     at.run()
     assert not at.exception
     assert any("AI_OK" in text for text in _texts(at))
+
+
+def test_actual_v3_entrypoint_routes_to_hardened_reports_page():
+    at = AppTest.from_string(_script("分析报表"), default_timeout=25)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+    assert any("REPORTS_OK" in text for text in _texts(at))
 
 
 def test_missing_access_configuration_fails_closed_before_database_read():
