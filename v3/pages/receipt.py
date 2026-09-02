@@ -23,7 +23,7 @@ from wywallet.receipt import (
     materialize_receipt_adjustments,
     reconcile_receipt_total,
 )
-from wywallet.receipt_identity import add_line_ids, receipt_already_exists, receipt_root_id
+from wywallet.receipt_identity import add_line_ids, receipt_presence, receipt_root_id
 from wywallet.snapshot import current_snapshot, fresh_snapshot
 from wywallet.ui import inject_css, money, page_header
 from wywallet.ux import ranked_categories
@@ -338,24 +338,33 @@ else:
     )
     edited = pd.DataFrame(edited)
 
-# The semantic receipt identity is based on the final human-confirmed editor
-# values, not the raw OCR output. This prevents a corrected date/item from
-# silently creating a different receipt identity on a later scan.
+# Receipt root and semantic line IDs are generated from the complete final human
+# draft. The line IDs are stable across OCR reordering, enabling a later scan to
+# safely complete only lines that were intentionally omitted on an earlier save.
 identity_rows = edited.to_dict("records") if not edited.empty else []
 root_id = receipt_root_id(payload, identity_rows)
 edited = pd.DataFrame(add_line_ids(identity_rows, root_id))
 _store_draft(image_signature, edited)
 
-already_saved = receipt_already_exists(root_id, transactions.get("receipt_id", pd.Series(dtype=str)).tolist())
+receipt_ids = transactions.get("receipt_id", pd.Series(dtype=str)).tolist()
+current_line_ids = edited.get("receipt_id", pd.Series(dtype=str)).tolist()
+presence = receipt_presence(root_id, current_line_ids, receipt_ids)
+whole_saved = bool(presence["complete"])
+partial_saved = bool(presence["partial"])
 force_whole_receipt = False
-if already_saved:
-    st.error("检测到按最终确认内容计算出的 Receipt ID 已经存在。默认禁止整张重复入账。")
+if whole_saved:
+    st.error("检测到这张收据的全部项目已经存在。默认禁止整张重复入账。")
     force_whole_receipt = st.checkbox(
         "我确认这是同一张收据，但仍要再次入账。",
         key=f"force_whole_receipt_{image_signature}",
     )
+elif partial_saved:
+    st.info(
+        f"检测到这张收据之前只保存了 {presence['matched']}/{presence['total']} 个项目。"
+        "已存在项目会自动跳过；本次可以安全补齐其余项目。"
+    )
 
-if already_saved and force_whole_receipt and not edited.empty:
+if whole_saved and force_whole_receipt and not edited.empty:
     edited["仍然保存重复"] = edited["保存"].fillna(False).astype(bool)
 
 existing = _duplicate_keys(transactions)
@@ -380,9 +389,13 @@ c.metric("日期待确认", f"{needs_date} 笔")
 d.metric("退款／折扣", money(refund_total))
 e.metric("净支出", money(expense_total - refund_total))
 
-reconciliation = reconcile_receipt_total(candidates, payload.get("receipt_total"))
+# During partial-completion mode only missing lines are candidates, so comparing
+# those missing lines alone with the full receipt payable would be misleading.
+reconciliation = None if partial_saved else reconcile_receipt_total(candidates, payload.get("receipt_total"))
 difference_needs_confirm = False
-if reconciliation:
+if partial_saved:
+    st.caption("补齐模式只会新增尚未保存的收据项目，因此不使用“本次新增金额”与整张收据总额做错误比较。")
+elif reconciliation:
     if reconciliation["matches"]:
         st.success(f"当前账本合计与收据总额 {money(reconciliation['receipt_total'])} 一致。")
     else:
@@ -404,7 +417,7 @@ confirm = st.checkbox(
     disabled=not candidates,
     key=f"receipt_final_confirm_{image_signature}",
 )
-blocked_whole = already_saved and not force_whole_receipt
+blocked_whole = whole_saved and not force_whole_receipt
 if st.button(
     "保存选中项目",
     type="primary",
@@ -414,8 +427,10 @@ if st.button(
 ):
     try:
         latest = fresh_snapshot()["transactions"]
-        if receipt_already_exists(root_id, latest.get("receipt_id", pd.Series(dtype=str)).tolist()) and not force_whole_receipt:
-            st.error("保存前再次确认：这张收据已经存在，因此没有写入任何交易。")
+        latest_ids = latest.get("receipt_id", pd.Series(dtype=str)).tolist()
+        latest_presence = receipt_presence(root_id, current_line_ids, latest_ids)
+        if latest_presence["complete"] and not force_whole_receipt:
+            st.error("保存前再次确认：这张收据已经完整存在，因此没有写入任何交易。")
             st.stop()
         fresh_keys = _duplicate_keys(latest)
         final_rows, skipped = finalize_receipt_candidates(candidates, fresh_keys)
@@ -425,7 +440,7 @@ if st.button(
         if not final_rows:
             st.warning("没有可新增的记录。")
             st.stop()
-        if already_saved and force_whole_receipt:
+        if whole_saved and force_whole_receipt:
             duplicate_root = hashlib.sha256(f"{root_id}:{uuid.uuid4()}".encode("utf-8")).hexdigest()[:16]
             final_rows = add_line_ids(final_rows, duplicate_root)
         saved = _insert_receipt_rows(final_rows)
