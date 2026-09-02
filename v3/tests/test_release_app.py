@@ -13,6 +13,7 @@ import runpy
 import pandas as pd
 import streamlit as st
 import wywallet.db as db
+import wywallet.snapshot as snapshot_mod
 import wywallet.web as web
 
 transactions = pd.DataFrame([
@@ -23,14 +24,19 @@ transactions = pd.DataFrame([
 transactions["date"] = pd.to_datetime(transactions["date"])
 invalid = pd.DataFrame(columns=["id", "date", "item", "category", "type", "amount", "note", "issues"])
 
-db.load_transactions = lambda: transactions.copy()
-db.load_invalid_transactions = lambda: invalid.copy()
-db.transactions_truncated = lambda: __TRUNCATED__
-db.data_loaded_at = lambda: "2026-09-01T14:00:00+08:00"
+snapshot_mod.current_snapshot = lambda: {
+    "transactions": transactions.copy(),
+    "invalid": invalid.copy(),
+    "categories": ["交通", "收入"],
+    "truncated": __TRUNCATED__,
+    "total_count": 3,
+    "database_revision": 1,
+    "database_revision_updated_at": "2026-09-01T14:00:00+08:00",
+    "loaded_at": "2026-09-01T14:00:00+08:00",
+}
+snapshot_mod.clear_snapshot_cache = lambda: None
 db.refresh_data = lambda: None
-web.load_transactions = db.load_transactions
-web.load_invalid_transactions = db.load_invalid_transactions
-web._sorted_categories = lambda frame: ["交通", "收入"]
+
 if __TRUNCATED__:
     def forbidden_dashboard(frame):
         raise RuntimeError("PARTIAL_DASHBOARD_RENDERED")
@@ -74,6 +80,14 @@ def _errors(at: AppTest) -> list[str]:
     return [str(element.value) for element in at.error]
 
 
+def test_actual_v3_entrypoint_uses_snapshot_not_legacy_multi_page_loader():
+    source = APP.read_text(encoding="utf-8")
+    assert "current_snapshot()" in source
+    assert "load_transactions" not in source
+    assert "transactions_truncated" not in source
+    assert "data_loaded_at" not in source
+
+
 def test_actual_v3_entrypoint_renders_dashboard_with_fake_database():
     at = AppTest.from_string(_script(), default_timeout=25)
     at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
@@ -108,8 +122,9 @@ def test_password_gate_is_rendered_before_database_read():
 
 def test_database_failure_is_visible_instead_of_blank_screen():
     script = _script().replace(
-        'db.load_transactions = lambda: transactions.copy()',
-        'def fail_load():\n    raise RuntimeError("SUPABASE_TEST_FAILURE")\ndb.load_transactions = fail_load',
+        'snapshot_mod.current_snapshot = lambda: {',
+        'def fail_snapshot():\n    raise RuntimeError("SUPABASE_TEST_FAILURE")\nsnapshot_mod.current_snapshot = fail_snapshot\nDUMMY = {',
+        1,
     )
     at = AppTest.from_string(script, default_timeout=20)
     at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
