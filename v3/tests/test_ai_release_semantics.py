@@ -49,7 +49,9 @@ def test_current_month_excluded_from_ytd_monthly_average_even_on_last_day(monkey
     monkeypatch.setattr(ai_release, "today_my", lambda: date(2026, 9, 30))
     monkeypatch.setattr(product_logic, "today_my", lambda: date(2026, 9, 30))
     frame = _frame([
-        {"date": "2026-01-10", "item": "Jan", "category": "其他", "type": "Expense", "amount": 800.0},
+        # Start on day 1 so this regression isolates current-month exclusion;
+        # partial-first-month behavior is covered separately in V3.2.5 tests.
+        {"date": "2026-01-01", "item": "Jan", "category": "其他", "type": "Expense", "amount": 800.0},
         {"date": "2026-09-30", "item": "Sep", "category": "其他", "type": "Expense", "amount": 9000.0},
     ])
     plan = FinanceQueryPlan(
@@ -74,4 +76,6 @@ def test_first_partial_history_year_average_does_not_count_pretracking_zero_mont
         date_from="2023-01-01", date_to="2023-12-31",
     )
     result = ai_release.execute_finance_plan(plan, frame)
+    # May is intentionally partial (first record on the 15th), so the complete
+    # tracked-month average uses June through December; each is RM100.
     assert result["authoritative_total"] == 100.0
