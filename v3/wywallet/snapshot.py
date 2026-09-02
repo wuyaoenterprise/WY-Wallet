@@ -7,6 +7,7 @@ import streamlit as st
 
 from .config import DEFAULT_CATEGORIES, MAX_TRANSACTION_ROWS, UI_CACHE_TTL_SECONDS, now_my
 from . import db
+from .ledger_codec import logical_type
 
 _SESSION_SNAPSHOT_KEY = "v3_session_snapshot"
 
@@ -36,12 +37,30 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
             raw_by_id[int(row.get("id"))] = row
         except Exception:
             continue
+
     if not valid.empty:
         valid["updated_at"] = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("updated_at") or ""))
         valid["flow_subtype"] = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("flow_subtype") or ""))
         valid["client_token"] = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("client_token") or ""))
         structured_receipts = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("receipt_id") or ""))
         valid["receipt_id"] = structured_receipts.where(structured_receipts.str.len() > 0, valid["receipt_id"].fillna(""))
+        raw_types = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("type") or ""))
+        valid["type"] = [
+            logical_type(raw_type, subtype, logical == "Refund")
+            for raw_type, subtype, logical in zip(raw_types.tolist(), valid["flow_subtype"].tolist(), valid["type"].tolist())
+        ]
+
+    if not invalid.empty and "id" in invalid:
+        def raw_value(value: Any, key: str) -> str:
+            try:
+                return str(raw_by_id.get(int(value), {}).get(key) or "")
+            except Exception:
+                return ""
+
+        invalid["updated_at"] = invalid["id"].map(lambda value: raw_value(value, "updated_at"))
+        invalid["receipt_id"] = invalid["id"].map(lambda value: raw_value(value, "receipt_id"))
+        invalid["flow_subtype"] = invalid["id"].map(lambda value: raw_value(value, "flow_subtype"))
+        invalid["client_token"] = invalid["id"].map(lambda value: raw_value(value, "client_token"))
 
     tx_categories = [] if valid.empty else [str(value).strip() for value in valid["category"].dropna() if str(value).strip()]
     source = (registered if registered else DEFAULT_CATEGORIES.copy()) + tx_categories
@@ -88,9 +107,6 @@ def _request_database_revision() -> dict[str, Any]:
 
 @st.cache_data(ttl=UI_CACHE_TTL_SECONDS, max_entries=32, show_spinner=False)
 def _load_snapshot(database_revision: int, limit: int) -> dict[str, Any]:
-    # The database revision is part of the cache key. Any committed ledger write
-    # invalidates this cache across Streamlit sessions without retransferring the
-    # full ledger when nothing changed.
     return _request_snapshot(limit)
 
 
@@ -111,9 +127,6 @@ def current_snapshot(limit: int = MAX_TRANSACTION_ROWS) -> dict[str, Any]:
     try:
         revision = _request_database_revision()
     except Exception:
-        # Degrade safely if the lightweight revision RPC is temporarily
-        # unavailable: read a fresh authoritative snapshot rather than serving a
-        # potentially stale session copy.
         snap = _request_snapshot(limit)
         _store_session_snapshot(snap, limit)
         return snap
@@ -145,6 +158,7 @@ def _normalize_inserted_row(raw_row: Any) -> pd.DataFrame:
     structured_receipt = str(row.get("receipt_id") or "")
     if structured_receipt:
         valid["receipt_id"] = structured_receipt
+    valid["type"] = logical_type(str(row.get("type") or valid.iloc[0]["type"]), str(row.get("flow_subtype") or ""), valid.iloc[0]["type"] == "Refund")
     return valid
 
 
@@ -154,13 +168,7 @@ def patch_session_snapshot_after_insert(
     expected_revision_delta: int = 1,
     limit: int = MAX_TRANSACTION_ROWS,
 ) -> bool:
-    """Patch the current session after an insert without re-downloading the ledger.
-
-    The patch is accepted only when the database revision advanced by exactly the
-    number of writes we just performed. If another browser changed the ledger at
-    the same time, the session snapshot is discarded so the next rerun performs a
-    full authoritative refresh instead of hiding that concurrent write.
-    """
+    """Patch the current session after an insert without re-downloading the ledger."""
     limit = int(limit)
     local = _session_snapshot(limit)
     if local is None:
