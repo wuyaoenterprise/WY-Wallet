@@ -29,6 +29,55 @@ def decode_legacy_note(note: object) -> tuple[str, bool, str]:
     return raw, marker_refund, receipt_id
 
 
+def _identity_date(value: object) -> str:
+    text = str(value or "").strip()
+    return text[:10] if len(text) >= 10 else text
+
+
+def _identity_item(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().casefold())
+
+
+def _identity_amount(value: object) -> float | None:
+    try:
+        return round(float(value), 2)
+    except Exception:
+        return None
+
+
+def receipt_identity_changed(original: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    """Whether an edit changes the semantic identity of a receipt line.
+
+    Category and note edits intentionally do not detach a receipt. Date, item,
+    logical type and amount do, because those fields participate in duplicate and
+    provenance semantics.
+    """
+    return (
+        _identity_date(original.get("date")) != _identity_date(candidate.get("date"))
+        or _identity_item(original.get("item")) != _identity_item(candidate.get("item"))
+        or str(original.get("type") or "") != str(candidate.get("type") or "")
+        or _identity_amount(original.get("amount")) != _identity_amount(candidate.get("amount"))
+    )
+
+
+def detach_receipt_if_identity_changed(
+    original: dict[str, Any],
+    logical: dict[str, Any],
+    existing_subtype: str | None = None,
+) -> tuple[dict[str, Any], str | None, bool]:
+    """Detach stale receipt provenance when a receipt-linked row is re-authored."""
+    result = dict(logical)
+    receipt_id = str(original.get("receipt_id") or result.get("receipt_id") or "").strip()
+    subtype = str(existing_subtype or "").strip() or None
+    if not receipt_id or not receipt_identity_changed(original, result):
+        return result, subtype, False
+
+    result["receipt_id"] = ""
+    if subtype and subtype.startswith("receipt_"):
+        subtype = None
+    return result, subtype, True
+
+
 def physical_payload(logical: dict[str, Any], existing_subtype: str | None = None) -> dict[str, Any]:
     """Encode a logical V3 transaction for the legacy Expense/Income DB schema.
 
