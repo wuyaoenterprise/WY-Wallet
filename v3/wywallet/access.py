@@ -72,8 +72,13 @@ def require_access() -> str:
         st.error(f"连续错误次数过多，请 {remaining} 秒后再试。")
         st.stop()
 
-    entered = st.text_input("访问密码", type="password", key="v3_access_password")
-    if st.button("进入", type="primary", width="stretch", key="v3_access_submit"):
+    # Streamlit forms submit when Enter is pressed in the password field, while
+    # keeping the explicit button for mouse/touch users.
+    with st.form("v3_access_form", clear_on_submit=False, enter_to_submit=True):
+        entered = st.text_input("访问密码", type="password", key="v3_access_password")
+        submitted = st.form_submit_button("进入", type="primary", width="stretch")
+
+    if submitted:
         if hmac.compare_digest(entered, configured):
             st.session_state["web_access_ok"] = True
             st.session_state["web_access_ok_at"] = now
