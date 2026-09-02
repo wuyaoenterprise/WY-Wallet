@@ -14,15 +14,7 @@ if str(V3_ROOT) not in sys.path:
 from wywallet.access import render_lock_button, require_access, touch_access
 from wywallet.ai import recognize_receipt
 from wywallet.config import APP_TITLE, APP_VERSION, BUILD_ID, EXPENSE, REFUND, today_my
-from wywallet.db import (
-    create_category,
-    existing_transaction_keys,
-    fetch_transactions_interactive_fresh,
-    insert_transactions,
-    load_categories,
-    load_transactions,
-    transaction_duplicate_key,
-)
+from wywallet.db import create_category, insert_transactions, transaction_duplicate_key
 from wywallet.receipt import (
     evaluate_receipt_candidates,
     finalize_receipt_candidates,
@@ -30,6 +22,7 @@ from wywallet.receipt import (
     reconcile_receipt_total,
 )
 from wywallet.receipt_identity import add_line_ids, receipt_already_exists, receipt_root_id
+from wywallet.snapshot import current_snapshot, fresh_snapshot
 from wywallet.ui import inject_css, money, page_header
 
 st.set_page_config(page_title=f"AI 收据识别 · {APP_TITLE}", page_icon="📷", layout="wide")
@@ -119,6 +112,16 @@ def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> 
     return pd.DataFrame(edited_rows)
 
 
+def _duplicate_keys(frame: pd.DataFrame) -> set[tuple]:
+    keys: set[tuple] = set()
+    for row in frame.to_dict("records") if not frame.empty else []:
+        try:
+            keys.add(transaction_duplicate_key(row))
+        except ValueError:
+            continue
+    return keys
+
+
 page_header("📷 AI 收据识别", "Gemini 负责提取；最终日期、金额、重复项和保存范围全部由本地逻辑验证。")
 st.caption(f"{APP_VERSION} · {BUILD_ID}")
 st.page_link("app.py", label="← 返回 WY Wallet", width="content")
@@ -128,8 +131,9 @@ with st.sidebar:
 loading = st.empty()
 loading.info("正在读取现有账本与类别…")
 try:
-    transactions = load_transactions()
-    categories = load_categories(transactions)
+    snap = current_snapshot()
+    transactions = snap["transactions"]
+    categories = snap["categories"]
 except Exception as exc:
     loading.empty()
     st.error(f"无法读取 Supabase：{exc}")
@@ -249,7 +253,7 @@ else:
     )
     edited = pd.DataFrame(add_line_ids(edited.to_dict("records"), root_id))
 
-existing = existing_transaction_keys(fresh=False)
+existing = _duplicate_keys(transactions)
 statuses, candidates = evaluate_receipt_candidates(edited, existing)
 summary = edited.copy()
 summary["状态"] = statuses
@@ -297,16 +301,11 @@ if st.button(
     disabled=not confirm or not candidates or not confirm_difference or blocked_whole,
 ):
     try:
-        latest, _, _ = fetch_transactions_interactive_fresh()
+        latest = fresh_snapshot()["transactions"]
         if receipt_already_exists(root_id, latest.get("receipt_id", pd.Series(dtype=str)).tolist()) and not force_whole_receipt:
             st.error("保存前再次确认：这张收据已经存在，因此没有写入任何交易。")
             st.stop()
-        fresh_keys = set()
-        for row in latest.to_dict("records") if not latest.empty else []:
-            try:
-                fresh_keys.add(transaction_duplicate_key(row))
-            except ValueError:
-                pass
+        fresh_keys = _duplicate_keys(latest)
         final_rows, skipped = finalize_receipt_candidates(candidates, fresh_keys)
         if skipped:
             st.warning("保存前发现新的重复记录。系统没有部分保存；请重新核对后再试。")
