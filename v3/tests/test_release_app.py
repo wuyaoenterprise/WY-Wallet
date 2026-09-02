@@ -16,6 +16,7 @@ import wywallet.db as db
 import wywallet.snapshot as snapshot_mod
 import wywallet.web as web
 import wywallet.ai_page as ai_page
+import wywallet.dashboard_page as dashboard_page
 import wywallet.transactions_page as transactions_page
 
 transactions = pd.DataFrame([
@@ -42,9 +43,9 @@ db.refresh_data = lambda: None
 if __TRUNCATED__:
     def forbidden_dashboard(frame):
         raise RuntimeError("PARTIAL_DASHBOARD_RENDERED")
-    web._dashboard = forbidden_dashboard
+    dashboard_page.render = forbidden_dashboard
 else:
-    web._dashboard = lambda frame: st.write("DASHBOARD_OK")
+    dashboard_page.render = lambda frame: st.write("DASHBOARD_OK")
 transactions_page.render = lambda frame, categories: st.write("TRANSACTIONS_OK")
 ai_page.render = lambda frame: st.write("AI_OK")
 web._reports_page = lambda frame, invalid_rows: st.write("REPORTS_OK")
