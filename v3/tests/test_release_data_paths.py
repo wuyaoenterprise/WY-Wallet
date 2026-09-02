@@ -46,6 +46,7 @@ def test_settings_page_uses_atomic_merge_mvcc_backup_and_hardened_repair():
     assert "web." not in source
     assert "disabled=disabled" in source
     assert '"build_id"' not in source
+    assert "structured_type = logical_type(raw_type" in source
 
 
 def test_receipt_page_preserves_editor_state_and_structured_metadata():
@@ -62,6 +63,8 @@ def test_receipt_page_preserves_editor_state_and_structured_metadata():
     assert "a, b, c, d, e = st.columns(5" in source
     assert "BUILD_ID" not in source
     assert "st.caption(APP_VERSION)" in source
+    assert "Whole-receipt duplicate confirmation is authoritative" in source
+    assert 'edited["仍然保存重复"] = edited["保存"]' in source
 
 
 def test_main_app_routes_to_dedicated_hardened_pages():
