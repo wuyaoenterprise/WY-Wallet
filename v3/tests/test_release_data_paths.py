@@ -81,6 +81,12 @@ def test_dashboard_month_window_is_calendar_anchored_and_equal_width():
     assert "category_orders" in source
 
 
+def test_metric_cards_have_consistent_minimum_height():
+    source = _source("v3/wywallet/ui.py")
+    assert "min-height:118px" in source
+    assert "min-height:104px" in source
+
+
 def test_displayed_version_is_compact_semver_only():
     config = _source("v3/wywallet/config.py")
     app = _source("v3/app.py")
