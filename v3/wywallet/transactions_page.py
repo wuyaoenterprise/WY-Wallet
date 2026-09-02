@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import uuid
 
 import pandas as pd
 import streamlit as st
@@ -9,7 +10,7 @@ from . import analytics, db
 from .access import touch_access
 from .config import ADD_CATEGORY_OPTION, EXPENSE, INCOME, REFUND, TRANSACTION_TYPES, TYPE_LABELS, today_my
 from .ledger_codec import physical_payload
-from .snapshot import clear_snapshot_cache, fresh_snapshot
+from .snapshot import clear_snapshot_cache
 from .transaction_commands import add_transaction_dialog
 from .ui import money, page_header
 from .ux import page_slice, ranked_categories
@@ -37,10 +38,10 @@ def _edit_dialog(row: dict, categories: list[str], transactions: pd.DataFrame) -
         options.insert(0, row["category"])
     options.append(ADD_CATEGORY_OPTION)
     selected = st.selectbox("类别", options, index=options.index(row["category"]), key=f"oc_edit_cat_{tx_id}")
-    new_category = st.text_input("新类别名称", key=f"oc_edit_new_cat_{tx_id}") if selected == ADD_CATEGORY_OPTION else ""
-    item = st.text_input("项目或商家", value=str(row["item"]), key=f"oc_edit_item_{tx_id}")
+    new_category = st.text_input("新类别名称", max_chars=80, key=f"oc_edit_new_cat_{tx_id}") if selected == ADD_CATEGORY_OPTION else ""
+    item = st.text_input("项目或商家", value=str(row["item"]), max_chars=180, key=f"oc_edit_item_{tx_id}")
     amount = st.number_input("金额 (RM)", min_value=0.01, step=0.01, value=float(row["amount"]), key=f"oc_edit_amount_{tx_id}")
-    note = st.text_area("备注", value=str(row.get("note") or ""), key=f"oc_edit_note_{tx_id}")
+    note = st.text_area("备注", value=str(row.get("note") or ""), max_chars=1000, key=f"oc_edit_note_{tx_id}")
 
     if not st.button("保存修改", type="primary", width="stretch", key=f"oc_edit_submit_{tx_id}"):
         return
@@ -87,6 +88,9 @@ def _delete_dialog(row: dict) -> None:
     touch_access()
     tx_id = int(row["id"])
     expected_updated_at = str(row.get("updated_at") or "")
+    if not expected_updated_at:
+        st.error("这笔交易缺少并发版本信息，请刷新页面后再删除。")
+        return
     st.write(f"**{row['item']}**")
     st.caption(f"{pd.to_datetime(row['date']).date()} · {row['category']} · {TYPE_LABELS[row['type']]} · {money(row['amount'])}")
     confirmed = st.checkbox("我确认删除这笔交易", key=f"oc_delete_confirm_{tx_id}")
@@ -98,7 +102,8 @@ def _delete_dialog(row: dict) -> None:
             "p_expected_updated_at": expected_updated_at,
         }).execute()
         st.session_state["recently_deleted"] = {
-            key: row.get(key) for key in ["date", "item", "category", "type", "amount", "note", "receipt_id", "flow_subtype"]
+            "row": {key: row.get(key) for key in ["date", "item", "category", "type", "amount", "note", "receipt_id", "flow_subtype"]},
+            "undo_token": str(uuid.uuid4()),
         }
         db.invalidate_data()
         st.toast("交易已删除，可撤销最近一次删除")
@@ -113,28 +118,31 @@ def _delete_dialog(row: dict) -> None:
             st.error(f"删除失败：{exc}")
 
 
-def _duplicate_key(row: dict) -> tuple:
-    logical = db.normalize_transaction(row)
-    return (logical["date"], logical["item"].casefold(), logical["type"], logical["amount"])
-
-
 def _restore_recent() -> None:
-    snapshot = st.session_state.get("recently_deleted")
-    if not snapshot:
+    state = st.session_state.get("recently_deleted")
+    if not state:
         return
-    latest = fresh_snapshot()["transactions"]
-    target_key = _duplicate_key(snapshot)
-    for row in latest.to_dict("records") if not latest.empty else []:
-        try:
-            if _duplicate_key(row) == target_key:
-                st.session_state.pop("recently_deleted", None)
-                st.info("数据库已经存在同等交易，因此没有重复恢复。")
-                return
-        except ValueError:
-            continue
+    if isinstance(state, dict) and isinstance(state.get("row"), dict):
+        snapshot = dict(state["row"])
+        token = str(state.get("undo_token") or "").strip() or str(uuid.uuid4())
+    else:
+        snapshot = dict(state)
+        token = str(uuid.uuid4())
+        st.session_state["recently_deleted"] = {"row": snapshot, "undo_token": token}
+
     logical = db.normalize_transaction(snapshot)
     payload = physical_payload(logical, str(snapshot.get("flow_subtype") or ""))
-    db.get_client().table("transactions").insert(payload).execute()
+    db.get_client().rpc("wy_wallet_insert_transaction", {
+        "p_date": payload["date"],
+        "p_item": payload["item"],
+        "p_category": payload["category"],
+        "p_type": payload["type"],
+        "p_amount": payload["amount"],
+        "p_note": payload["note"],
+        "p_receipt_id": payload.get("receipt_id"),
+        "p_flow_subtype": payload.get("flow_subtype"),
+        "p_client_token": token,
+    }).execute()
     db.invalidate_data()
     st.session_state.pop("recently_deleted", None)
     st.toast("已恢复最近删除")
@@ -182,7 +190,7 @@ def _render_table(filtered: pd.DataFrame, categories: list[str], transactions: p
         "日期": page["date"].dt.strftime("%Y-%m-%d"), "项目": page["item"], "类别": page["category"],
         "类型": page["type"].map(TYPE_LABELS), "金额": page.apply(lambda row: _signed_money(row["type"], row["amount"]), axis=1), "备注": page["note"],
     })
-    st.table(display)
+    st.dataframe(display, hide_index=True, width="stretch", height=min(520, 38 + 35 * max(len(display), 1)))
     row_map = {int(row["id"]): row.to_dict() for _, row in page.iterrows()}
     selected = st.selectbox("选择一笔交易进行操作", [None] + list(row_map), format_func=lambda value: "— 请选择 —" if value is None else f"{pd.to_datetime(row_map[value]['date']).date()} · {row_map[value]['item']} · {_signed_money(row_map[value]['type'], row_map[value]['amount'])}", key="oc_action")
     if selected is not None:
@@ -215,9 +223,19 @@ def _render_cards(filtered: pd.DataFrame, categories: list[str], transactions: p
                 _delete_dialog(row)
 
 
-def render(transactions: pd.DataFrame, categories: list[str]) -> None:
+def render(
+    transactions: pd.DataFrame,
+    categories: list[str],
+    *,
+    truncated: bool = False,
+    total_count: int | None = None,
+) -> None:
     touch_access()
     page_header("交易记录", "跨设备编辑使用数据库版本检查；若记录已被其他设备修改，本次操作不会覆盖它。")
+    if truncated:
+        shown = len(transactions)
+        total = int(total_count or shown)
+        st.warning(f"账本共有约 {total:,} 笔交易；本页当前只载入最近 {shown:,} 笔，因此搜索、筛选和分页仅针对这部分数据。完整数据请使用「设置与备份 → 备份」。")
     add, receipt, undo, refresh, _ = st.columns([1, 1.2, 1.25, 1, 2.8])
     if add.button("＋ 新增交易", type="primary", width="stretch", key="oc_add"):
         add_transaction_dialog(categories, transactions)
