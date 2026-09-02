@@ -35,8 +35,13 @@ CSS = """
 div[data-testid="stMetric"]{border:1px solid var(--wy-border);border-radius:14px;padding:.82rem 1rem;background:rgba(127,127,127,.035);min-height:118px;box-sizing:border-box}div[data-testid="stMetricLabel"]{color:var(--wy-muted)}div[data-testid="stMetricValue"]{font-size:1.42rem}
 .wy-calendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.wy-calendar-head{text-align:center;color:var(--wy-muted);font-size:.78rem;padding:.25rem}.wy-calendar-day{min-height:68px;border:1px solid var(--wy-border);border-radius:10px;padding:.45rem}.wy-calendar-date{color:var(--wy-muted);font-size:.78rem}.wy-calendar-amount{font-size:.84rem;font-weight:750;margin-top:.42rem}
 .wy-callout{border-left:3px solid var(--wy-primary);padding:.7rem .9rem;background:rgba(91,143,249,.08);border-radius:0 10px 10px 0;margin:.4rem 0}
-[data-testid="stPlotlyChart"]{border:1px solid var(--wy-border);border-radius:16px;padding:.35rem .45rem .1rem;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));overflow:hidden}[data-testid="stPlotlyChart"] [data-testid="stElementToolbar"]{display:none!important}[data-testid="stPlotlyChart"] .js-plotly-plot,[data-testid="stPlotlyChart"] .plot-container{touch-action:pan-y!important}
-@media(max-width:760px){[data-testid="stAppViewContainer"]>.main .block-container{padding-left:.7rem;padding-right:.7rem}.wy-page-title{font-size:1.55rem}.wy-calendar{gap:3px}.wy-calendar-day{min-height:48px;padding:.25rem}.wy-calendar-amount{font-size:.66rem;margin-top:.2rem}[data-testid="stPlotlyChart"]{border-radius:12px;padding:.15rem .1rem 0}div[data-testid="stMetric"]{padding:.65rem .75rem;min-height:104px}div[data-testid="stMetricValue"]{font-size:1.15rem}}
+[data-testid="stPlotlyChart"]{border:1px solid var(--wy-border);border-radius:16px;padding:.35rem .45rem .1rem;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));overflow:visible}[data-testid="stPlotlyChart"] [data-testid="stElementToolbar"]{display:none!important}[data-testid="stPlotlyChart"] .js-plotly-plot,[data-testid="stPlotlyChart"] .plot-container{touch-action:pan-y!important}
+@media(max-width:760px){
+[data-testid="stAppViewContainer"]>.main .block-container{padding-left:.7rem;padding-right:.7rem}.wy-page-title{font-size:1.55rem}.wy-calendar{gap:3px}.wy-calendar-day{min-height:48px;padding:.25rem}.wy-calendar-amount{font-size:.66rem;margin-top:.2rem}[data-testid="stPlotlyChart"]{border-radius:12px;padding:.15rem .1rem 0}div[data-testid="stMetric"]{padding:.65rem .75rem;min-height:104px}div[data-testid="stMetricValue"]{font-size:1.15rem}
+div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]){flex-wrap:wrap!important;gap:.5rem!important}
+div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"])>div[data-testid="stColumn"]{flex:1 1 calc(50% - .25rem)!important;width:calc(50% - .25rem)!important;min-width:0!important}
+div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"])>div[data-testid="stColumn"]:last-child:nth-child(odd){flex-basis:100%!important;width:100%!important}
+}
 </style>
 """
 
@@ -99,7 +104,7 @@ def polish_figure(fig: go.Figure) -> go.Figure:
     fig.update_layout(
         dragmode=False, clickmode="none", uirevision="wy-wallet-fixed-chart",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=18, r=18, t=34, b=18), font=dict(size=13),
+        margin=dict(l=22, r=28, t=42, b=24), font=dict(size=13),
         hoverlabel=dict(bgcolor="rgba(20,24,33,.96)", bordercolor="rgba(255,255,255,.16)", font=dict(color="#FFFFFF", size=12)),
         legend=dict(bgcolor="rgba(0,0,0,0)", borderwidth=0, font=dict(size=11), itemclick=False, itemdoubleclick=False),
     )
