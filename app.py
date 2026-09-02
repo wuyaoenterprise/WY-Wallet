@@ -4,8 +4,8 @@ import streamlit as st
 
 # The legacy root application is intentionally retired. The supported V3
 # deployment entrypoint is v3/app.py. Keeping this file as a fail-closed guard
-# prevents an accidentally reconfigured Streamlit deployment from silently
-# starting the historical Smart Asset Pro runtime and its direct database reads.
+# prevents an accidentally reconfigured deployment from starting historical
+# direct-database application code.
 ROOT_ENTRYPOINT_RETIRED = True
 V3_ENTRYPOINT = "v3/app.py"
 
