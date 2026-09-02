@@ -38,3 +38,18 @@ def test_main_app_routes_to_dedicated_hardened_pages():
     assert "transactions_page.render" in source
     assert "ai_page.render" in source
     assert "settings_page.render" in source
+
+
+def test_new_transaction_uses_revision_guarded_fast_snapshot_patch():
+    commands = _source("v3/wywallet/transaction_commands.py")
+    snapshot = _source("v3/wywallet/snapshot.py")
+    assert "patch_session_snapshot_after_insert" in commands
+    assert "expected_revision_delta=1 + int(category_created)" in commands
+    assert "wy_wallet_get_ledger_revision" in snapshot
+    assert "revision[\"revision\"] != old_revision" in snapshot
+    assert "database_revision" in snapshot
+
+
+def test_main_app_does_not_refetch_snapshot_inside_fragments():
+    source = _source("v3/app.py")
+    assert source.count("current_snapshot()") == 1
