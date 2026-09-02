@@ -42,15 +42,15 @@ def add_transaction_dialog(categories: list[str], transactions: pd.DataFrame | N
     options = ordered_categories + [ADD_CATEGORY_OPTION]
     selected_category = st.selectbox("类别", options, key="fast_add_category")
     new_category_name = (
-        st.text_input("新类别名称", placeholder="保存后同时登记", key="fast_add_new_category")
+        st.text_input("新类别名称", placeholder="保存后同时登记", max_chars=80, key="fast_add_new_category")
         if selected_category == ADD_CATEGORY_OPTION
         else ""
     )
-    item = st.text_input("项目或商家", placeholder="例如：午餐、Grab、房租", key="fast_add_item")
+    item = st.text_input("项目或商家", placeholder="例如：午餐、Grab、房租", max_chars=180, key="fast_add_item")
     amount = st.number_input(
-        "金额 (RM)", min_value=0.0, step=0.01, value=None, placeholder="0.00", key="fast_add_amount"
+        "金额 (RM)", min_value=0.01, step=0.01, value=None, placeholder="0.00", key="fast_add_amount"
     )
-    note = st.text_area("备注（可选）", key="fast_add_note")
+    note = st.text_area("备注（可选）", max_chars=1000, key="fast_add_note")
     if tx_type == "Refund":
         st.caption("退款不是收入；它会抵减所选类别的净支出。")
 
