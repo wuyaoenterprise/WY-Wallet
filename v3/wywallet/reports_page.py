@@ -89,7 +89,7 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
     if highest is not None and float(highest["支出"]) > 0:
         st.caption(f"最高净支出月份：{highest['月份']} · {money(highest['支出'])}")
     elif highest is not None:
-        st.caption("本追踪区间没有正净支出月份。")
+        st.caption("本年度没有正净支出月份（仅按已追踪区间判断）。")
     if yoy:
         if yoy.get("reason"):
             st.caption("同比不可用：" + str(yoy["reason"]))
