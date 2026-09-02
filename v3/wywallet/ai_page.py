@@ -21,6 +21,7 @@ from .config import EXPENSE, REFUND, TYPE_LABELS
 from .db import ledger_signature
 from .snapshot import fresh_snapshot
 from .ui import page_header, render_chart, section_title
+from .ux import page_slice
 
 
 def _render_list(plan_dict: dict, transactions: pd.DataFrame) -> None:
@@ -34,11 +35,7 @@ def _render_list(plan_dict: dict, transactions: pd.DataFrame) -> None:
     if frame.empty:
         st.info("没有匹配记录。")
         return
-    page_size = 100
-    page_count = max(1, (len(frame) + page_size - 1) // page_size)
-    page = int(st.selectbox("分页", range(1, page_count + 1), format_func=lambda value: f"第 {value}/{page_count} 页", key="ai_release_page")) if page_count > 1 else 1
-    start = (page - 1) * page_size
-    end = min(start + page_size, len(frame))
+    _, start, end = page_slice("分页", "ai_release_page", len(frame), 100)
     show = frame.iloc[start:end][["date", "item", "category", "type", "amount", "note"]].copy()
     show["date"] = show["date"].dt.strftime("%Y-%m-%d")
     show["type"] = show["type"].map(TYPE_LABELS)
@@ -105,6 +102,8 @@ def render(transactions: pd.DataFrame) -> None:
     question = st.chat_input("例如：1到8月平均每月打油多少？8月跟6月比？最大一笔支出？")
     if question:
         try:
+            with st.chat_message("user"):
+                st.markdown(question)
             with st.chat_message("assistant"):
                 with st.spinner("正在读取最新账本并计算..."):
                     fresh = fresh_snapshot()["transactions"]
