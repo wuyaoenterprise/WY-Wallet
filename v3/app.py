@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 V3_ROOT = Path(__file__).resolve().parent
@@ -23,31 +24,27 @@ inject_css()
 
 
 @st.fragment
-def _transactions_fragment() -> None:
+def _transactions_fragment(transactions: pd.DataFrame, categories: list[str]) -> None:
     touch_access()
-    snap = current_snapshot()
-    transactions_page.render(snap["transactions"], snap["categories"])
+    transactions_page.render(transactions, categories)
 
 
 @st.fragment
-def _reports_fragment() -> None:
+def _reports_fragment(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
     touch_access()
-    snap = current_snapshot()
-    web._reports_page(snap["transactions"], snap["invalid"])
+    web._reports_page(transactions, invalid_rows)
 
 
 @st.fragment
-def _ai_fragment() -> None:
+def _ai_fragment(transactions: pd.DataFrame) -> None:
     touch_access()
-    snap = current_snapshot()
-    ai_page.render(snap["transactions"])
+    ai_page.render(transactions)
 
 
 @st.fragment
-def _settings_fragment() -> None:
+def _settings_fragment(transactions: pd.DataFrame, invalid_rows: pd.DataFrame, categories: list[str]) -> None:
     touch_access()
-    snap = current_snapshot()
-    settings_page.render(snap["transactions"], snap["invalid"], snap["categories"])
+    settings_page.render(transactions, invalid_rows, categories)
 
 
 def main() -> None:
@@ -108,13 +105,13 @@ def main() -> None:
     if navigation == "总览":
         web._dashboard(transactions)
     elif navigation == "交易记录":
-        _transactions_fragment()
+        _transactions_fragment(transactions, categories)
     elif navigation == "分析报表":
-        _reports_fragment()
+        _reports_fragment(transactions, invalid_rows)
     elif navigation == "AI 洞察":
-        _ai_fragment()
+        _ai_fragment(transactions)
     else:
-        _settings_fragment()
+        _settings_fragment(transactions, invalid_rows, categories)
 
 
 if __name__ == "__main__":
