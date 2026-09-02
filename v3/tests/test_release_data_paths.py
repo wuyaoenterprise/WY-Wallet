@@ -38,6 +38,8 @@ def test_main_app_routes_to_dedicated_hardened_pages():
     assert "transactions_page.render" in source
     assert "ai_page.render" in source
     assert "settings_page.render" in source
+    assert "dashboard_page.render" in source
+    assert "web._dashboard" not in source
 
 
 def test_new_transaction_uses_revision_guarded_fast_snapshot_patch():
@@ -53,3 +55,26 @@ def test_new_transaction_uses_revision_guarded_fast_snapshot_patch():
 def test_main_app_does_not_refetch_snapshot_inside_fragments():
     source = _source("v3/app.py")
     assert source.count("current_snapshot()") == 1
+
+
+def test_password_gate_supports_enter_submit():
+    source = _source("v3/wywallet/access.py")
+    assert "st.form(" in source
+    assert "enter_to_submit=True" in source
+    assert "st.form_submit_button" in source
+
+
+def test_dashboard_month_window_is_calendar_anchored_and_equal_width():
+    source = _source("v3/wywallet/dashboard_page.py")
+    assert "pd.period_range(end=current_period" in source
+    assert "groupby([\"year\", \"month\"]" in source
+    assert "m1, m2, m3, m4, m5 = st.columns(5" in source
+    assert "category_orders" in source
+
+
+def test_displayed_version_is_compact_semver_only():
+    config = _source("v3/wywallet/config.py")
+    app = _source("v3/app.py")
+    assert 'APP_VERSION = "v3.2.2"' in config
+    assert "BUILD_ID" not in app
+    assert "st.caption(APP_VERSION)" in app
