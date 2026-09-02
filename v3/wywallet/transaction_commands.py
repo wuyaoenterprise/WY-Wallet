@@ -7,6 +7,7 @@ import streamlit as st
 from . import db
 from .access import touch_access
 from .config import ADD_CATEGORY_OPTION, EXPENSE, INCOME, REFUND, REFUND_DB_MARKER, TRANSACTION_TYPES, TYPE_LABELS, today_my
+from .snapshot import patch_session_snapshot_after_insert
 
 
 def _submission_token() -> str:
@@ -72,7 +73,7 @@ def add_transaction_dialog(categories: list[str]) -> None:
             physical_note = f"{REFUND_DB_MARKER} {physical_note}".rstrip()
             flow_subtype = "customer_refund"
 
-        db.get_client().rpc(
+        response = db.get_client().rpc(
             "wy_wallet_insert_transaction",
             {
                 "p_date": logical["date"],
@@ -87,14 +88,25 @@ def add_transaction_dialog(categories: list[str]) -> None:
             },
         ).execute()
 
+        category_created = False
         if selected_category == ADD_CATEGORY_OPTION:
             try:
-                db.create_category(category)
+                category_created = db.create_category(category)
             except Exception:
                 st.warning("交易已保存，但类别登记失败；它仍会以历史类别显示。")
 
-        # Invalidate only after the RPC has committed. The main app then reloads
-        # through one wy_wallet_snapshot RPC instead of 3 x 1,000-row GET pages.
+        # Avoid re-downloading the complete ledger after every save. The local
+        # snapshot is patched only when the database revision advanced by exactly
+        # our own insert (+ optional category insert). Any concurrent writer makes
+        # this return False, causing the rerun to fetch an authoritative snapshot.
+        patch_session_snapshot_after_insert(
+            response.data,
+            expected_revision_delta=1 + int(category_created),
+        )
+
+        # Keep the older data helpers and backup bundle coherent too. This no
+        # longer forces the V3 snapshot to reload because snapshot freshness is
+        # guarded by the database ledger revision.
         db.invalidate_data()
         _clear_submission_token()
         st.toast("交易已保存")
