@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import calendar
 from datetime import date, timedelta
 
 import pandas as pd
@@ -101,7 +100,6 @@ def _sanitize_monthly_coverage(result: dict, transactions: pd.DataFrame) -> None
         except Exception:
             cleaned.append(row)
             continue
-        period_start = period.start_time.date()
         period_end = period.end_time.date()
         if first is not None and period_end < first:
             continue
@@ -111,11 +109,9 @@ def _sanitize_monthly_coverage(result: dict, transactions: pd.DataFrame) -> None
             and first.month == period.month
             and first.day > 1
         )
-        partial_current = bool(
-            period.year == today.year
-            and period.month == today.month
-            and today.day < calendar.monthrange(today.year, today.month)[1]
-        )
+        # The current calendar month is partial for the entire month, including
+        # the final calendar day until the month has actually rolled over.
+        partial_current = bool(period.year == today.year and period.month == today.month)
         row["partial_tracking"] = partial_tracking
         row["partial_current"] = partial_current
         label = str(row.get("label") or period.strftime("%Y-%m"))
