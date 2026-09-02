@@ -10,7 +10,7 @@ if str(V3_ROOT) not in sys.path:
     sys.path.insert(0, str(V3_ROOT))
 
 import wywallet.web as web
-from wywallet import ai_page, transactions_page
+from wywallet import ai_page, settings_page, transactions_page
 from wywallet.access import render_lock_button, require_access, touch_access
 from wywallet.config import APP_TITLE, APP_VERSION, BUILD_ID, TIMEZONE_NAME
 from wywallet.db import refresh_data
@@ -47,7 +47,7 @@ def _ai_fragment() -> None:
 def _settings_fragment() -> None:
     touch_access()
     snap = current_snapshot()
-    web._settings_page(snap["transactions"], snap["invalid"], snap["categories"])
+    settings_page.render(snap["transactions"], snap["invalid"], snap["categories"])
 
 
 def main() -> None:
