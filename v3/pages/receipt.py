@@ -112,6 +112,23 @@ def _clear_target_editor_state(signature: str, mode: str) -> None:
             st.session_state.pop(key, None)
 
 
+def _clear_receipt_session_state(signature: str) -> None:
+    """Clear all draft/editor/confirmation state tied to one receipt image."""
+    if not signature:
+        return
+    _clear_target_editor_state(signature, "表格")
+    _clear_target_editor_state(signature, "卡片")
+    st.session_state.pop(_draft_key(signature), None)
+    st.session_state.pop(f"receipt_last_mode_{signature}", None)
+    for prefix in [
+        "force_whole_receipt_",
+        "receipt_difference_confirm_",
+        "receipt_final_confirm_",
+        "receipt_save_",
+    ]:
+        st.session_state.pop(f"{prefix}{signature}", None)
+
+
 def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> pd.DataFrame:
     edited_rows: list[dict] = []
     for index, row in frame.reset_index(drop=True).iterrows():
@@ -219,10 +236,12 @@ if len(raw) > 10 * 1024 * 1024:
     st.stop()
 
 image_signature = hashlib.sha256(raw).hexdigest()[:20]
-if st.session_state.get("receipt_signature") != image_signature:
+previous_signature = str(st.session_state.get("receipt_signature") or "")
+if previous_signature != image_signature:
+    _clear_receipt_session_state(previous_signature)
     st.session_state["receipt_signature"] = image_signature
     st.session_state.pop("receipt_result", None)
-    st.session_state.pop(_draft_key(image_signature), None)
+    _clear_receipt_session_state(image_signature)
 
 preview, action = st.columns([1, 1.25], gap="large")
 with preview:
@@ -234,14 +253,14 @@ with action:
             mime = getattr(source, "type", None) or "image/jpeg"
             with st.spinner("正在识别收据…"):
                 result = recognize_receipt(raw, mime, categories, instruction.strip())
+            _clear_receipt_session_state(image_signature)
             st.session_state["receipt_result"] = result.model_dump()
-            st.session_state.pop(_draft_key(image_signature), None)
             st.rerun()
         except Exception as exc:
             st.error(f"收据识别失败：{exc}")
     if st.button("清除识别结果", width="stretch"):
         st.session_state.pop("receipt_result", None)
-        st.session_state.pop(_draft_key(image_signature), None)
+        _clear_receipt_session_state(image_signature)
         st.rerun()
 
 payload = st.session_state.get("receipt_result")
@@ -411,7 +430,7 @@ if st.button(
             final_rows = add_line_ids(final_rows, duplicate_root)
         saved = _insert_receipt_rows(final_rows)
         st.session_state.pop("receipt_result", None)
-        st.session_state.pop(_draft_key(image_signature), None)
+        _clear_receipt_session_state(image_signature)
         st.toast(f"成功保存 {saved} 笔交易")
         st.balloons()
         st.rerun()
