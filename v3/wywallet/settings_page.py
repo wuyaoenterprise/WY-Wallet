@@ -11,7 +11,7 @@ from .access import touch_access
 from .backup import database_revision, full_backup_snapshot
 from .config import APP_VERSION, BACKUP_BUNDLE_TTL_SECONDS, EXPENSE, INCOME, REFUND, TIMEZONE_NAME, TRANSACTION_TYPES, TYPE_LABELS, now_my, today_my
 from .exporting import build_backup_excel, safe_csv_bytes
-from .ledger_codec import decode_legacy_note, logical_type, physical_payload
+from .ledger_codec import decode_legacy_note, detach_receipt_if_identity_changed, logical_type, physical_payload, receipt_identity_changed
 from .ui import page_header, section_title
 from .ux import ranked_categories
 
@@ -136,6 +136,15 @@ def _repair_invalid_dialog(raw_row: dict) -> None:
     else:
         default_type = structured_type if structured_type in TRANSACTION_TYPES else EXPENSE
     receipt_id = str(raw_row.get("receipt_id") or legacy_receipt_id or "")
+    existing_subtype = str(raw_row.get("flow_subtype") or "").strip() or None
+
+    original_identity = dict(raw_row)
+    original_identity["receipt_id"] = receipt_id
+    original_identity["type"] = default_type
+    if not pd.isna(parsed_amount):
+        original_identity["amount"] = abs(float(parsed_amount)) if negative_expense or legacy_refund else float(parsed_amount)
+    if not pd.isna(parsed_date):
+        original_identity["date"] = parsed_date.date()
 
     st.caption(f"当前问题：{raw_row.get('issues', '')}")
     c1, c2 = st.columns(2)
@@ -145,6 +154,16 @@ def _repair_invalid_dialog(raw_row: dict) -> None:
     category = st.text_input("类别", value=str(raw_row.get("category") or ""), max_chars=80, key=f"release_repair_cat_{tx_id}")
     amount = st.number_input("金额", min_value=0.01, step=0.01, value=default_amount, key=f"release_repair_amount_{tx_id}")
     note = st.text_area("备注", value=clean_note, max_chars=1000, key=f"release_repair_note_{tx_id}")
+
+    receipt_linked = bool(receipt_id.strip())
+    identity_changed = receipt_linked and receipt_identity_changed(
+        original_identity,
+        {"date": tx_date, "item": item, "type": tx_type, "amount": amount},
+    )
+    if identity_changed:
+        st.warning("这笔无效记录来自收据；修复后日期、项目、类型或金额会改变，因此保存时会解除旧 Receipt ID，避免把新内容继续挂在旧收据身份上。")
+    elif receipt_linked:
+        st.caption("这笔记录来自收据。若只修复类别或备注，会保留原 Receipt ID。")
 
     if not st.button("保存修复", type="primary", width="stretch", key=f"release_repair_submit_{tx_id}"):
         return
@@ -158,7 +177,12 @@ def _repair_invalid_dialog(raw_row: dict) -> None:
             "note": note,
             "receipt_id": receipt_id,
         })
-        payload = physical_payload(logical, str(raw_row.get("flow_subtype") or ""))
+        logical, subtype, detached = detach_receipt_if_identity_changed(
+            original_identity,
+            logical,
+            existing_subtype,
+        )
+        payload = physical_payload(logical, subtype)
         db.get_client().rpc("wy_wallet_update_transaction", {
             "p_id": tx_id,
             "p_expected_updated_at": expected_updated_at,
@@ -172,7 +196,7 @@ def _repair_invalid_dialog(raw_row: dict) -> None:
             "p_flow_subtype": payload.get("flow_subtype"),
         }).execute()
         db.invalidate_data()
-        st.toast("无效交易已修复并重新纳入报表")
+        st.toast("无效交易已修复；原收据关联已解除" if detached else "无效交易已修复并重新纳入报表")
         st.rerun()
     except Exception as exc:
         text = str(exc)
