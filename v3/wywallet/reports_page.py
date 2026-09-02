@@ -7,6 +7,7 @@ import streamlit as st
 from . import analytics
 from .access import touch_access
 from .config import EXPENSE, REFUND, now_my
+from .product_logic import historical_monthly_average, invalid_quality_for_year, recurring_items_by_category, tracking_start_date
 from .ui import empty_state, money, page_header, render_chart, section_title
 
 
@@ -40,11 +41,20 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
     annual_expense = float(display_annual["支出"].sum())
     annual_income = float(display_annual["收入"].sum())
     annual_refund = float(display_annual["退款"].sum())
-    monthly_avg = analytics.average_monthly_expense(annual, year)
+    monthly_avg = historical_monthly_average(annual, year, transactions)
     savings = analytics.annual_savings_rate(annual)
     yoy = analytics.same_period_yoy(transactions, year)
     highest = display_annual.loc[display_annual["支出"].idxmax()] if not display_annual.empty else None
-    avg_label = "已完成月份月均" if current_year and now.month > 1 else ("1月截至目前" if current_year else "全年月均")
+    first = tracking_start_date(transactions)
+    if current_year:
+        if first is not None and first.year == year and first.month >= now.month:
+            avg_label = f"{now.month}月截至目前"
+        elif now.month > 1:
+            avg_label = "已完成追踪月份月均"
+        else:
+            avg_label = "1月截至目前"
+    else:
+        avg_label = "追踪期间月均" if first is not None and first.year == year and first.month > 1 else "全年月均"
     prefix = "截至目前" if current_year else "年度"
     yoy_text = "无同期数据" if not yoy or yoy["change"] is None else f"{yoy['change']:+.1%} 同期同比"
 
@@ -58,6 +68,8 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
         st.caption(f"最高净支出月份：{highest['月份']} · {money(highest['支出'])}")
     if yoy:
         st.caption(f"同比口径：{yoy['current_start']}–{yoy['current_end']} 对比 {yoy['previous_start']}–{yoy['previous_end']}。")
+    if first is not None and first.year == year and first.month > 1:
+        st.caption(f"{year} 年账本从 {first:%Y-%m-%d} 开始，因此月均只按实际追踪月份计算，不把追踪开始前的月份当作 0 元月份。")
 
     section = st.segmented_control(
         "报表区块",
@@ -187,7 +199,7 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
 
     else:
         anomalies = analytics.anomaly_transactions(year_all)
-        recurring = analytics.recurring_items(year_all)
+        recurring = recurring_items_by_category(year_all)
         left, right = st.columns(2, gap="large")
         with left:
             section_title("异常高额支出")
@@ -207,8 +219,9 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
                 show["金额波动"] = show["金额波动"].map(lambda value: f"{value:.0%}")
                 st.dataframe(show, hide_index=True, width="stretch")
         quality = analytics.data_quality(year_all)
+        invalid_for_year, invalid_unassigned = invalid_quality_for_year(invalid_rows, year)
         a, b, c, d = st.columns(4)
-        a.metric("空项目名称", quality["blank_items"])
-        b.metric("零或负金额", quality["nonpositive_amounts"])
-        c.metric("疑似重复", quality["duplicates"])
-        d.metric("数据库无效记录", len(invalid_rows))
+        a.metric("有效交易", f"{len(year_all):,}")
+        b.metric("疑似重复记录", quality["duplicates"])
+        c.metric("本年无效记录", invalid_for_year)
+        d.metric("无效日期无法归年", invalid_unassigned)
