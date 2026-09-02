@@ -39,8 +39,10 @@ def physical_payload(logical: dict[str, Any], existing_subtype: str | None = Non
     return payload
 
 
-def logical_type(raw_type: str, flow_subtype: str | None, marker_refund: bool = False) -> str:
+def logical_type(raw_type: str, flow_subtype: str | None, already_logical_refund: bool = False) -> str:
     subtype = str(flow_subtype or "").strip()
-    if str(raw_type) == INCOME and (marker_refund or subtype in REFUND_SUBTYPES):
+    if already_logical_refund:
+        return REFUND
+    if str(raw_type) == INCOME and subtype in REFUND_SUBTYPES:
         return REFUND
     return str(raw_type)
