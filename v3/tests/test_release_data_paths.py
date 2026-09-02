@@ -17,6 +17,14 @@ def test_transactions_page_uses_database_optimistic_concurrency():
     assert "WY_WALLET_CONFLICT" in source
 
 
+def test_transactions_page_has_complete_card_paging_and_forced_refresh():
+    source = _source("v3/wywallet/transactions_page.py")
+    assert 'key="oc_card_page"' in source
+    assert "filtered.iloc[start:start + page_size]" in source
+    assert "clear_snapshot_cache()" in source
+    assert "a, b, c, d, e = st.columns(5" in source
+
+
 def test_settings_page_uses_atomic_merge_and_mvcc_backup():
     source = _source("v3/wywallet/settings_page.py")
     assert "wy_wallet_merge_category" in source
@@ -52,9 +60,10 @@ def test_new_transaction_uses_revision_guarded_fast_snapshot_patch():
     assert "database_revision" in snapshot
 
 
-def test_main_app_does_not_refetch_snapshot_inside_fragments():
+def test_main_app_uses_one_snapshot_without_nested_fragments():
     source = _source("v3/app.py")
     assert source.count("current_snapshot()") == 1
+    assert "@st.fragment" not in source
 
 
 def test_password_gate_supports_enter_submit():
