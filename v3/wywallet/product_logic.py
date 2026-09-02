@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date
 
 import pandas as pd
@@ -15,12 +16,37 @@ def tracking_start_date(transactions: pd.DataFrame | None) -> date | None:
     return None if valid.empty else valid.min().date()
 
 
+def first_complete_tracking_month(transactions: pd.DataFrame | None, year: int) -> int | None:
+    """Return the first complete calendar month available in ``year``.
+
+    If ledger tracking began after day 1, that first calendar month is partial and
+    is excluded once later complete months exist. This avoids treating a one-day
+    month at the beginning of the ledger as a full monthly observation.
+    """
+    first = tracking_start_date(transactions)
+    year = int(year)
+    if first is None or first.year > year:
+        return None
+    if first.year < year:
+        return 1
+    month = first.month + (1 if first.day > 1 else 0)
+    return month if month <= 12 else None
+
+
 def tracked_month_count(transactions: pd.DataFrame | None, start: date, end: date) -> int:
     first = tracking_start_date(transactions)
     effective_start = max(start, first) if first is not None else start
     if effective_start > end:
         return 0
-    return (end.year - effective_start.year) * 12 + end.month - effective_start.month + 1
+    if effective_start.day > 1:
+        next_month = pd.Timestamp(effective_start).replace(day=1) + pd.DateOffset(months=1)
+        effective_start = next_month.date()
+    effective_end = end
+    if effective_end.day < calendar.monthrange(effective_end.year, effective_end.month)[1]:
+        effective_end = (pd.Timestamp(effective_end).replace(day=1) - pd.DateOffset(days=1)).date()
+    if effective_start > effective_end:
+        return 0
+    return (effective_end.year - effective_start.year) * 12 + effective_end.month - effective_start.month + 1
 
 
 def historical_monthly_average(annual: pd.DataFrame, year: int, transactions: pd.DataFrame) -> float | None:
@@ -30,22 +56,26 @@ def historical_monthly_average(annual: pd.DataFrame, year: int, transactions: pd
     if year > now.year or first is None or first.year > year:
         return None
 
+    start_month = first_complete_tracking_month(transactions, year)
     if year < now.year:
-        start_month = first.month if first.year == year else 1
+        if start_month is None:
+            return None
         end_month = 12
     else:
         completed = now.month - 1
-        if completed <= 0:
-            start_month = now.month
-            end_month = now.month
-        else:
-            start_month = first.month if first.year == year else 1
+        if start_month is not None and start_month <= completed:
             end_month = completed
-            if start_month > end_month:
-                start_month = now.month
-                end_month = now.month
+        else:
+            # No complete tracked month exists yet. Preserve the useful existing
+            # behavior by showing the current partial month actual rather than an
+            # invented monthly average or zero.
+            if first.year == year and first <= today_my():
+                return float(annual.loc[annual["month"] == now.month, "支出"].sum())
+            return None
 
-    months = max(end_month - start_month + 1, 1)
+    months = end_month - start_month + 1
+    if months <= 0:
+        return None
     total = float(annual.loc[annual["month"].between(start_month, end_month), "支出"].sum())
     return total / months
 
