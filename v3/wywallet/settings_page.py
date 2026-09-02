@@ -11,7 +11,7 @@ from .access import touch_access
 from .backup import database_revision, full_backup_snapshot
 from .config import APP_VERSION, BACKUP_BUNDLE_TTL_SECONDS, EXPENSE, REFUND, TIMEZONE_NAME, TRANSACTION_TYPES, TYPE_LABELS, now_my, today_my
 from .exporting import build_backup_excel, safe_csv_bytes
-from .ledger_codec import physical_payload
+from .ledger_codec import logical_type, physical_payload
 from .ui import page_header, section_title
 from .ux import ranked_categories
 
@@ -128,7 +128,8 @@ def _repair_invalid_dialog(raw_row: dict) -> None:
     parsed_amount = pd.to_numeric(raw_row.get("amount"), errors="coerce")
     default_amount = abs(float(parsed_amount)) if not pd.isna(parsed_amount) and float(parsed_amount) != 0 else 0.01
     raw_type = str(raw_row.get("type") or "")
-    default_type = REFUND if raw_type == EXPENSE and not pd.isna(parsed_amount) and float(parsed_amount) < 0 else (raw_type if raw_type in TRANSACTION_TYPES else EXPENSE)
+    structured_type = logical_type(raw_type, str(raw_row.get("flow_subtype") or ""))
+    default_type = REFUND if raw_type == EXPENSE and not pd.isna(parsed_amount) and float(parsed_amount) < 0 else (structured_type if structured_type in TRANSACTION_TYPES else EXPENSE)
 
     st.caption(f"当前问题：{raw_row.get('issues', '')}")
     c1, c2 = st.columns(2)
