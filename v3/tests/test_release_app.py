@@ -33,7 +33,7 @@ snapshot_mod.current_snapshot = lambda: {
     "invalid": invalid.copy(),
     "categories": ["交通", "收入"],
     "truncated": __TRUNCATED__,
-    "total_count": 3,
+    "total_count": 100001 if __TRUNCATED__ else 3,
     "database_revision": 1,
     "database_revision_updated_at": "2026-09-01T14:00:00+08:00",
     "loaded_at": "2026-09-01T14:00:00+08:00",
@@ -47,7 +47,7 @@ if __TRUNCATED__:
     dashboard_page.render = forbidden_dashboard
 else:
     dashboard_page.render = lambda frame: st.write("DASHBOARD_OK")
-transactions_page.render = lambda frame, categories: st.write("TRANSACTIONS_OK")
+transactions_page.render = lambda frame, categories, **kwargs: st.write("TRANSACTIONS_OK")
 ai_page.render = lambda frame: st.write("AI_OK")
 reports_page.render = lambda frame, invalid_rows: st.write("REPORTS_OK")
 settings_page.render = lambda frame, invalid_rows, categories: st.write("SETTINGS_OK")
