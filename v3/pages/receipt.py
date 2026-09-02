@@ -132,7 +132,7 @@ def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> 
                 "类型", [EXPENSE, REFUND], index=0 if row["type"] == EXPENSE else 1,
                 key=f"receipt_type_{signature}_{index}",
             )
-            item = st.text_input("项目／商家", value=str(row.get("item") or ""), key=f"receipt_item_{signature}_{index}")
+            item = st.text_input("项目／商家", value=str(row.get("item") or ""), max_chars=180, key=f"receipt_item_{signature}_{index}")
             e1, e2 = st.columns(2)
             options = list(categories)
             current_category = str(row.get("category") or "")
@@ -147,7 +147,7 @@ def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> 
                 value=float(row["amount"]) if not pd.isna(row["amount"]) else 0.01,
                 key=f"receipt_amount_{signature}_{index}",
             )
-            note = st.text_area("备注", value=str(row.get("note") or ""), key=f"receipt_note_{signature}_{index}")
+            note = st.text_area("备注", value=str(row.get("note") or ""), max_chars=1000, key=f"receipt_note_{signature}_{index}")
             edited_rows.append({
                 "保存": keep,
                 "日期已确认": date_ok,
@@ -161,9 +161,7 @@ def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> 
                 "receipt_id": str(row.get("receipt_id") or ""),
                 "flow_subtype": str(row.get("flow_subtype") or "").strip() or None,
             })
-    edited = pd.DataFrame(edited_rows)
-    _store_draft(signature, edited)
-    return edited
+    return pd.DataFrame(edited_rows)
 
 
 def _duplicate_keys(frame: pd.DataFrame) -> set[tuple]:
@@ -230,7 +228,7 @@ preview, action = st.columns([1, 1.25], gap="large")
 with preview:
     st.image(raw, caption="待识别收据", width="stretch")
 with action:
-    instruction = st.text_area("补充说明（可选）", placeholder="例如：这是退款单；日期实际是昨天。")
+    instruction = st.text_area("补充说明（可选）", placeholder="例如：这是退款单；日期实际是昨天。", max_chars=1000)
     if st.button("✨ 使用 Gemini 3.7 Flash 识别", type="primary", width="stretch"):
         try:
             mime = getattr(source, "type", None) or "image/jpeg"
@@ -257,21 +255,13 @@ if not base_rows:
     st.stop()
 
 fallback_category = "其他" if "其他" in categories else (categories[0] if categories else "其他")
-root_id = receipt_root_id(payload, base_rows)
-already_saved = receipt_already_exists(root_id, transactions.get("receipt_id", pd.Series(dtype=str)).tolist())
-force_whole_receipt = False
-if already_saved:
-    st.error("检测到这张收据的 Receipt ID 已经存在。默认禁止整张重复入账。")
-    force_whole_receipt = st.checkbox("我确认这是同一张收据，但仍要再次入账。", key="force_whole_receipt")
-
 tax = float(payload.get("tax") or 0)
 service_charge = float(payload.get("service_charge") or 0)
 discount = float(payload.get("discount") or 0)
 rows = materialize_receipt_adjustments(
     base_rows, tax=tax, service_charge=service_charge, discount=discount,
-    fallback_category=fallback_category, receipt_id=root_id,
+    fallback_category=fallback_category, receipt_id=None,
 )
-rows = add_line_ids(rows, root_id)
 if tax or service_charge or discount:
     st.info(f"附加项：税 {money(tax)} · 服务费 {money(service_charge)} · 折扣 {money(discount)}。折扣会抵减净支出。")
 if payload.get("merchant") or payload.get("receipt_number"):
@@ -285,9 +275,9 @@ if bool(frame.get("_date_future", pd.Series(dtype=bool)).any()):
 draft = _initial_draft(frame, image_signature)
 
 st.subheader("检查并修改")
-st.caption("手机默认使用卡片编辑；日期看不清或识别成未来日期时会暂填今天，但必须人工确认。")
+st.caption("手机默认使用卡片编辑；日期看不清或识别成未来日期时会暂填今天，但必须人工确认。Receipt ID 会在人工修改完成后按最终内容生成。")
 new_cat_col, create_col = st.columns([2, 1])
-new_cat = new_cat_col.text_input("需要新类别时先建立", placeholder="例如：宠物")
+new_cat = new_cat_col.text_input("需要新类别时先建立", placeholder="例如：宠物", max_chars=80)
 if create_col.button("＋ 建立类别", width="stretch"):
     try:
         created = create_category(new_cat)
@@ -317,22 +307,35 @@ else:
             "日期已确认": st.column_config.CheckboxColumn("日期已确认"),
             "仍然保存重复": st.column_config.CheckboxColumn("仍然保存重复"),
             "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD", required=True, max_value=today_my()),
-            "item": st.column_config.TextColumn("项目／商家", required=True, width="large"),
+            "item": st.column_config.TextColumn("项目／商家", required=True, width="large", max_chars=180),
             "category": st.column_config.SelectboxColumn("类别", options=categories, required=True),
             "type": st.column_config.SelectboxColumn("类型", options=[EXPENSE, REFUND], required=True),
             "amount": st.column_config.NumberColumn("金额", min_value=0.01, format="RM %.2f", required=True),
-            "note": st.column_config.TextColumn("备注", width="large"),
+            "note": st.column_config.TextColumn("备注", width="large", max_chars=1000),
             "receipt_id": None,
             "flow_subtype": None,
         },
         key=f"receipt_editor_release_{image_signature}",
     )
-    edited = pd.DataFrame(add_line_ids(edited.to_dict("records"), root_id))
-    _store_draft(image_signature, edited)
+    edited = pd.DataFrame(edited)
 
-# Whole-receipt duplicate confirmation is authoritative. Once the user explicitly
-# confirms re-importing the same receipt, requiring a second confirmation on every
-# individual line is redundant and makes legitimate full re-imports impractical.
+# The semantic receipt identity is based on the final human-confirmed editor
+# values, not the raw OCR output. This prevents a corrected date/item from
+# silently creating a different receipt identity on a later scan.
+identity_rows = edited.to_dict("records") if not edited.empty else []
+root_id = receipt_root_id(payload, identity_rows)
+edited = pd.DataFrame(add_line_ids(identity_rows, root_id))
+_store_draft(image_signature, edited)
+
+already_saved = receipt_already_exists(root_id, transactions.get("receipt_id", pd.Series(dtype=str)).tolist())
+force_whole_receipt = False
+if already_saved:
+    st.error("检测到按最终确认内容计算出的 Receipt ID 已经存在。默认禁止整张重复入账。")
+    force_whole_receipt = st.checkbox(
+        "我确认这是同一张收据，但仍要再次入账。",
+        key=f"force_whole_receipt_{image_signature}",
+    )
+
 if already_saved and force_whole_receipt and not edited.empty:
     edited["仍然保存重复"] = edited["保存"].fillna(False).astype(bool)
 
@@ -370,17 +373,25 @@ if reconciliation:
             f"{money(abs(reconciliation['difference']))}。请检查漏项、附加费用、折扣或退款方向。"
         )
 confirm_difference = (
-    st.checkbox("我已检查总额差异，仍确认按当前项目保存。", key="receipt_difference_confirm_release")
+    st.checkbox(
+        "我已检查总额差异，仍确认按当前项目保存。",
+        key=f"receipt_difference_confirm_{image_signature}",
+    )
     if difference_needs_confirm
     else True
 )
-confirm = st.checkbox(f"我已核对，并确认新增 {len(candidates)} 笔交易。", disabled=not candidates)
+confirm = st.checkbox(
+    f"我已核对，并确认新增 {len(candidates)} 笔交易。",
+    disabled=not candidates,
+    key=f"receipt_final_confirm_{image_signature}",
+)
 blocked_whole = already_saved and not force_whole_receipt
 if st.button(
     "保存选中项目",
     type="primary",
     width="stretch",
     disabled=not confirm or not candidates or not confirm_difference or blocked_whole,
+    key=f"receipt_save_{image_signature}",
 ):
     try:
         latest = fresh_snapshot()["transactions"]
