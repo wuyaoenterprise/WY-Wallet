@@ -14,6 +14,7 @@ from wywallet.access import render_lock_button, require_access, touch_access
 from wywallet.config import APP_TITLE, APP_VERSION, BUILD_ID, TIMEZONE_NAME
 from wywallet.db import refresh_data
 from wywallet.snapshot import clear_snapshot_cache, current_snapshot
+from wywallet.transaction_commands import add_transaction_dialog
 from wywallet.ui import inject_css, page_header
 
 st.set_page_config(page_title=APP_TITLE, page_icon="💳", layout="wide")
@@ -73,7 +74,7 @@ def main() -> None:
     with st.sidebar:
         st.markdown('<div class="wy-brand"><div class="wy-brand-title">💳 WY Wallet</div><div class="wy-brand-subtitle">个人财务中心 · V3</div></div>', unsafe_allow_html=True)
         if st.button("＋ 新增交易", type="primary", width="stretch"):
-            web.add_transaction_dialog(categories)
+            add_transaction_dialog(categories)
         st.page_link("pages/receipt.py", label="📷 AI 收据识别", width="stretch")
         navigation = st.radio(
             "导航",
