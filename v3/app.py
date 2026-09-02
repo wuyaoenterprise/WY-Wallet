@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 V3_ROOT = Path(__file__).resolve().parent
@@ -12,7 +11,7 @@ if str(V3_ROOT) not in sys.path:
 
 import wywallet.web as web
 from wywallet import ai_page, dashboard_page, settings_page, transactions_page
-from wywallet.access import render_lock_button, require_access, touch_access
+from wywallet.access import render_lock_button, require_access
 from wywallet.config import APP_TITLE, APP_VERSION, TIMEZONE_NAME
 from wywallet.db import refresh_data
 from wywallet.snapshot import clear_snapshot_cache, current_snapshot
@@ -21,30 +20,6 @@ from wywallet.ui import inject_css, page_header
 
 st.set_page_config(page_title=APP_TITLE, page_icon="💳", layout="wide")
 inject_css()
-
-
-@st.fragment
-def _transactions_fragment(transactions: pd.DataFrame, categories: list[str]) -> None:
-    touch_access()
-    transactions_page.render(transactions, categories)
-
-
-@st.fragment
-def _reports_fragment(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
-    touch_access()
-    web._reports_page(transactions, invalid_rows)
-
-
-@st.fragment
-def _ai_fragment(transactions: pd.DataFrame) -> None:
-    touch_access()
-    ai_page.render(transactions)
-
-
-@st.fragment
-def _settings_fragment(transactions: pd.DataFrame, invalid_rows: pd.DataFrame, categories: list[str]) -> None:
-    touch_access()
-    settings_page.render(transactions, invalid_rows, categories)
 
 
 def main() -> None:
@@ -102,16 +77,20 @@ def main() -> None:
         st.error("交易已超过 100,000 笔。请先到「设置与备份」制作完整备份并归档，或升级数据库查询方案后再继续统计。")
         return
 
+    # Navigation already reruns this entrypoint. Passing the single loaded
+    # snapshot directly avoids nested-fragment rerun chains and a second data
+    # lookup, preserving the live latency hotfix while using the hardened V3
+    # page modules.
     if navigation == "总览":
         dashboard_page.render(transactions)
     elif navigation == "交易记录":
-        _transactions_fragment(transactions, categories)
+        transactions_page.render(transactions, categories)
     elif navigation == "分析报表":
-        _reports_fragment(transactions, invalid_rows)
+        web._reports_page(transactions, invalid_rows)
     elif navigation == "AI 洞察":
-        _ai_fragment(transactions)
+        ai_page.render(transactions)
     else:
-        _settings_fragment(transactions, invalid_rows, categories)
+        settings_page.render(transactions, invalid_rows, categories)
 
 
 if __name__ == "__main__":
