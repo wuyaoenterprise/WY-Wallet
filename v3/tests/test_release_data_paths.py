@@ -70,6 +70,7 @@ def test_receipt_page_recomputes_identity_after_human_edits_and_scopes_confirmat
     assert "receipt_draft_" in source
     assert "_store_draft" in source
     assert "_clear_target_editor_state" in source
+    assert "_clear_receipt_session_state" in source
     assert "flow_subtype" in source
     assert "physical_payload" in source
     assert '.table("transactions").insert(payloads)' in source
@@ -85,6 +86,8 @@ def test_receipt_page_recomputes_identity_after_human_edits_and_scopes_confirmat
     assert 'key=f"receipt_difference_confirm_{image_signature}"' in source
     assert 'key=f"receipt_final_confirm_{image_signature}"' in source
     assert 'edited["仍然保存重复"] = edited["保存"]' in source
+    assert "_clear_receipt_session_state(previous_signature)" in source
+    assert source.count("_clear_receipt_session_state(image_signature)") >= 4
 
 
 def test_main_app_routes_to_dedicated_hardened_pages():
