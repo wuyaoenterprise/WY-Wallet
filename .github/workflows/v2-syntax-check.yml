@@ -67,8 +67,7 @@ jobs:
           reject 'runpy\.run_path'
           grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v3/wywallet/config.py
           grep -q 'APP_TITLE = "WY Wallet V3"' v3/wywallet/config.py
-          grep -q 'APP_VERSION = "2026.09.01-v3.2.1"' v3/wywallet/config.py
-          grep -q 'BUILD_ID = "v3-release-candidate-r1"' v3/wywallet/config.py
+          grep -q 'APP_VERSION = "v3.2.2"' v3/wywallet/config.py
           grep -q 'showSidebarNavigation = false' .streamlit/config.toml
 
       - name: Run V3 release regressions
@@ -84,6 +83,7 @@ jobs:
           import wywallet.access
           import wywallet.ai
           import wywallet.analytics
+          import wywallet.dashboard_page
           import wywallet.db
           import wywallet.exporting
           import wywallet.receipt
