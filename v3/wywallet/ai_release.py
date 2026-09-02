@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import calendar
 from datetime import date, timedelta
 
 import pandas as pd
@@ -55,6 +54,15 @@ def _completed_month_average(plan: base.FinanceQueryPlan, transactions: pd.DataF
     effective_start = max(start, first) if first is not None else start
     if effective_start > effective_end:
         return 0.0
+
+    # If the requested/tracked range starts in the middle of a month and later
+    # complete months exist, exclude that first partial calendar month from both
+    # numerator and denominator. If it is the only available month, retain the
+    # actual-to-date value instead of manufacturing a zero/empty average.
+    if effective_start.day > 1:
+        next_month = (pd.Timestamp(effective_start).replace(day=1) + pd.DateOffset(months=1)).date()
+        if next_month <= effective_end:
+            effective_start = next_month
 
     ranged = base._filter_range(base_frame, effective_start, effective_end)
     total = base._amount_total(ranged, flow)
