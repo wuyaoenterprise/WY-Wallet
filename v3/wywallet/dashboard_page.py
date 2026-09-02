@@ -64,7 +64,6 @@ def render(transactions: pd.DataFrame) -> None:
     change = None if prior_expense == 0 else (expense - prior_expense) / abs(prior_expense)
     forecast = analytics.historical_month_end_forecast(transactions, now.year, now.month, now.day)
 
-    # One equal-width row keeps all primary numbers visually comparable.
     m1, m2, m3, m4, m5 = st.columns(5, gap="small")
     m1.metric("本月收入", money(income))
     m2.metric(
@@ -138,17 +137,16 @@ def render(transactions: pd.DataFrame) -> None:
         recent = recent.sort_values(sort_columns, ascending=[False] * len(sort_columns))
     recent = recent.head(8).copy()
     type_labels = {EXPENSE: "支出", "Income": "收入", REFUND: "退款"}
-    st.table(
-        pd.DataFrame(
-            {
-                "日期": recent["date"].dt.strftime("%Y-%m-%d"),
-                "项目": recent["item"],
-                "类别": recent["category"],
-                "类型": recent["type"].map(type_labels),
-                "金额": recent.apply(
-                    lambda row: ("+" if row["type"] in {"Income", REFUND} else "−") + money(row["amount"]),
-                    axis=1,
-                ),
-            }
-        )
+    display = pd.DataFrame(
+        {
+            "日期": recent["date"].dt.strftime("%Y-%m-%d"),
+            "项目": recent["item"],
+            "类别": recent["category"],
+            "类型": recent["type"].map(type_labels),
+            "金额": recent.apply(
+                lambda row: ("+" if row["type"] in {"Income", REFUND} else "−") + money(row["amount"]),
+                axis=1,
+            ),
+        }
     )
+    st.dataframe(display, hide_index=True, width="stretch", height=min(360, 38 + 35 * max(len(display), 1)))
