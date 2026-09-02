@@ -94,6 +94,7 @@ jobs:
           import wywallet.ai
           import wywallet.ai_page
           import wywallet.analytics
+          import wywallet.coverage
           import wywallet.dashboard_page
           import wywallet.db
           import wywallet.exporting
