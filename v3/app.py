@@ -10,9 +10,10 @@ if str(V3_ROOT) not in sys.path:
     sys.path.insert(0, str(V3_ROOT))
 
 import wywallet.web as web
-from wywallet.access import render_lock_button, require_access
+from wywallet.access import render_lock_button, require_access, touch_access
 from wywallet.config import APP_TITLE, APP_VERSION, BUILD_ID, TIMEZONE_NAME
-from wywallet.db import data_loaded_at, load_invalid_transactions, load_transactions, refresh_data, transactions_truncated
+from wywallet.db import refresh_data
+from wywallet.snapshot import clear_snapshot_cache, current_snapshot
 from wywallet.ui import inject_css, page_header
 
 st.set_page_config(page_title=APP_TITLE, page_icon="💳", layout="wide")
@@ -21,24 +22,30 @@ inject_css()
 
 @st.fragment
 def _transactions_fragment() -> None:
-    tx = load_transactions()
-    web._transactions_page(tx, web._sorted_categories(tx))
+    touch_access()
+    snap = current_snapshot()
+    web._transactions_page(snap["transactions"], snap["categories"])
 
 
 @st.fragment
 def _reports_fragment() -> None:
-    web._reports_page(load_transactions(), load_invalid_transactions())
+    touch_access()
+    snap = current_snapshot()
+    web._reports_page(snap["transactions"], snap["invalid"])
 
 
 @st.fragment
 def _ai_fragment() -> None:
-    web._ai_page(load_transactions())
+    touch_access()
+    snap = current_snapshot()
+    web._ai_page(snap["transactions"])
 
 
 @st.fragment
 def _settings_fragment() -> None:
-    tx = load_transactions()
-    web._settings_page(tx, load_invalid_transactions(), web._sorted_categories(tx))
+    touch_access()
+    snap = current_snapshot()
+    web._settings_page(snap["transactions"], snap["invalid"], snap["categories"])
 
 
 def main() -> None:
@@ -47,10 +54,11 @@ def main() -> None:
     loading = st.empty()
     loading.info("正在连接财务数据库…")
     try:
-        transactions = load_transactions()
-        invalid_rows = load_invalid_transactions()
-        categories = web._sorted_categories(transactions)
-        truncated = transactions_truncated()
+        snap = current_snapshot()
+        transactions = snap["transactions"]
+        invalid_rows = snap["invalid"]
+        categories = snap["categories"]
+        truncated = bool(snap["truncated"])
     except Exception as exc:
         loading.empty()
         page_header("无法连接财务数据库", "网站已经正常启动，但 Supabase 数据读取失败。")
@@ -82,9 +90,10 @@ def main() -> None:
         st.divider()
         if st.button("↻ 刷新数据", width="stretch"):
             refresh_data()
+            clear_snapshot_cache()
             st.rerun()
         render_lock_button()
-        st.caption(f"数据读取：{data_loaded_at() or '未知'}")
+        st.caption(f"数据读取：{snap['loaded_at'] or '未知'}")
         st.caption(f"{APP_VERSION} · {BUILD_ID}")
         st.caption(f"Malaysia time · {TIMEZONE_NAME}")
         st.caption("🔒 密码保护已启用" if access_mode == "password" else "🔒 由平台私有访问保护")
