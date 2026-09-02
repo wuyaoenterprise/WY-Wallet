@@ -27,6 +27,19 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     valid, invalid = db.split_transaction_rows(raw_transactions)
     valid = db.canonicalize_transaction_categories(valid, registered)
 
+    raw_by_id: dict[int, dict[str, Any]] = {}
+    for row in raw_transactions:
+        try:
+            raw_by_id[int(row.get("id"))] = row
+        except Exception:
+            continue
+    if not valid.empty:
+        valid["updated_at"] = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("updated_at") or ""))
+        valid["flow_subtype"] = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("flow_subtype") or ""))
+        valid["client_token"] = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("client_token") or ""))
+        structured_receipts = valid["id"].map(lambda value: str(raw_by_id.get(int(value), {}).get("receipt_id") or ""))
+        valid["receipt_id"] = structured_receipts.where(structured_receipts.str.len() > 0, valid["receipt_id"].fillna(""))
+
     tx_categories = [] if valid.empty else [str(value).strip() for value in valid["category"].dropna() if str(value).strip()]
     source = (registered if registered else DEFAULT_CATEGORIES.copy()) + tx_categories
     seen: set[str] = set()
