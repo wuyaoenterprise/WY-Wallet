@@ -4,7 +4,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 APP_TITLE = "WY Wallet V3"
-APP_VERSION = "2026.09.01-v3.2.1"
+APP_VERSION = "v3.2.2"
 BUILD_ID = "v3-release-candidate-r1"
 TIMEZONE_NAME = "Asia/Kuala_Lumpur"
 TIMEZONE = ZoneInfo(TIMEZONE_NAME)
