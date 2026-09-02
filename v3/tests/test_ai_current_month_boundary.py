@@ -17,7 +17,7 @@ def test_current_month_remains_partial_on_its_last_calendar_day(monkeypatch):
     monkeypatch.setattr(ai_release, "today_my", lambda: today)
     monkeypatch.setattr(base_ai, "today_my", lambda: today)
     frame = pd.DataFrame([
-        {"id": 1, "date": pd.Timestamp("2026-08-15"), "item": "August", "category": "其他", "type": EXPENSE, "amount": 100.0, "note": "", "receipt_id": ""},
+        {"id": 1, "date": pd.Timestamp("2026-08-01"), "item": "August", "category": "其他", "type": EXPENSE, "amount": 100.0, "note": "", "receipt_id": ""},
         {"id": 2, "date": pd.Timestamp("2026-09-30"), "item": "September", "category": "其他", "type": EXPENSE, "amount": 1.0, "note": "", "receipt_id": ""},
     ])
     plan = FinanceQueryPlan(
