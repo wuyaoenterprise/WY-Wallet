@@ -25,7 +25,7 @@ LOCKED_CHART_CONFIG = {
 
 CSS = """
 <style>
-:root{--wy-primary:#5b8ff9;--wy-positive:#218a63;--wy-negative:#d84f4f;--wy-refund:#248b96;--wy-warning:#b77900;--wy-border:rgba(128,128,128,.24);--wy-muted:#667085}
+:root{--wy-primary:#5b8ff9;--wy-positive:#218a63;--wy-negative:#d84f4f;--wy-refund:#248b96;--wy-warning:#b77900;--wy-border:rgba(128,128,128,.24);--wy-muted:color-mix(in srgb,var(--text-color,#667085) 68%,transparent)}
 [data-testid="stAppViewContainer"]>.main .block-container{max-width:1280px;padding-top:1.15rem;padding-bottom:3rem}
 [data-testid="stSidebar"]{border-right:1px solid var(--wy-border)}
 .wy-brand{padding:.35rem 0 1rem}.wy-brand-title{font-size:1.45rem;font-weight:800;line-height:1.2}.wy-muted,.wy-brand-subtitle{color:var(--wy-muted);font-size:.88rem}
@@ -93,8 +93,8 @@ def stable_color(name: str) -> str:
 def polish_figure(fig: go.Figure) -> go.Figure:
     if not hasattr(fig, "update_layout"):
         return fig
-    trace_types = {getattr(t, "type", "") for t in fig.data}
-    horizontal_bar = any(getattr(t, "type", "") == "bar" and getattr(t, "orientation", None) == "h" for t in fig.data)
+    trace_types = {getattr(trace, "type", "") for trace in fig.data}
+    horizontal_bar = any(getattr(trace, "type", "") == "bar" and getattr(trace, "orientation", None) == "h" for trace in fig.data)
     pie_only = bool(trace_types) and trace_types.issubset({"pie"})
     fig.update_layout(
         dragmode=False, clickmode="none", uirevision="wy-wallet-fixed-chart",
