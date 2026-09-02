@@ -1,12 +1,32 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from .config import EXPENSE, INCOME, REFUND, REFUND_DB_MARKER
+from .config import EXPENSE, INCOME, RECEIPT_META_PREFIX, REFUND, REFUND_DB_MARKER
 
 REFUND_SUBTYPES = {"customer_refund", "receipt_discount"}
 EXPENSE_SUBTYPES = {"receipt_tax", "receipt_service_charge"}
 ALLOWED_FLOW_SUBTYPES = REFUND_SUBTYPES | EXPENSE_SUBTYPES
+_RECEIPT_RE = re.compile(r"\[WY_RECEIPT:([A-Za-z0-9_-]{6,64})\]")
+
+
+def decode_legacy_note(note: object) -> tuple[str, bool, str]:
+    """Return user-visible note plus legacy refund/receipt metadata.
+
+    This keeps repair/edit UIs from exposing internal markers while preserving
+    backward compatibility with rows written before structured metadata existed.
+    """
+    raw = str(note or "")
+    marker_refund = False
+    if raw.startswith(REFUND_DB_MARKER):
+        marker_refund = True
+        raw = raw[len(REFUND_DB_MARKER):].lstrip()
+    match = _RECEIPT_RE.search(raw)
+    receipt_id = match.group(1) if match else ""
+    if match:
+        raw = _RECEIPT_RE.sub("", raw).strip()
+    return raw, marker_refund, receipt_id
 
 
 def physical_payload(logical: dict[str, Any], existing_subtype: str | None = None) -> dict[str, Any]:
