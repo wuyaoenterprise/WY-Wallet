@@ -8,19 +8,26 @@ from . import analytics
 from .access import touch_access
 from .config import EXPENSE, REFUND, now_my
 from .coverage import historical_month_end_forecast, safe_change_ratio
+from .product_logic import tracking_start_date
 from .ui import empty_state, money, page_header, render_chart, section_title
 
 
 def _recent_months_summary(frame: pd.DataFrame, periods: int = 12) -> pd.DataFrame:
-    """Build a calendar-anchored month window ending at the Malaysia current month.
+    """Build a calendar-anchored window without inventing pretracking zeroes.
 
-    Using explicit year/month keys avoids stale categorical/Period alignment and
-    guarantees the current month is always represented as the final bar, even
-    when it only has partial-month data.
+    Genuine zero-spend months after tracking starts remain in the calendar. Months
+    before the first ledger observation are unknown coverage and are omitted.
     """
     now = now_my()
     current_period = pd.Period(year=now.year, month=now.month, freq="M")
     month_periods = pd.period_range(end=current_period, periods=int(periods), freq="M")
+    first = tracking_start_date(frame)
+    if first is None:
+        return pd.DataFrame(
+            columns=["period", "year", "month", "月份", "支出", "是否首月不完整", "是否当月未完整", "显示月份"]
+        )
+    first_period = pd.Period(first, freq="M")
+    month_periods = month_periods[month_periods >= first_period]
     base = pd.DataFrame(
         {
             "period": month_periods,
@@ -45,8 +52,17 @@ def _recent_months_summary(frame: pd.DataFrame, periods: int = 12) -> pd.DataFra
         base = base.merge(grouped, on=["year", "month"], how="left")
         base["支出"] = pd.to_numeric(base["支出"], errors="coerce").fillna(0.0)
 
+    base["是否首月不完整"] = (
+        (base["year"] == first.year)
+        & (base["month"] == first.month)
+        & (first.day > 1)
+    )
     base["是否当月未完整"] = (base["year"] == now.year) & (base["month"] == now.month)
-    base["显示月份"] = base["月份"] + base["是否当月未完整"].map({True: "*", False: ""})
+    base["显示月份"] = (
+        base["月份"]
+        + base["是否首月不完整"].map({True: "†", False: ""})
+        + base["是否当月未完整"].map({True: "*", False: ""})
+    )
     return base.sort_values(["year", "month"]).reset_index(drop=True)
 
 
@@ -99,17 +115,25 @@ def render(transactions: pd.DataFrame) -> None:
     with left:
         section_title("最近 12 个月净支出")
         twelve = _recent_months_summary(transactions)
-        fig = px.bar(
-            twelve,
-            x="显示月份",
-            y="支出",
-            text_auto=".0f",
-            category_orders={"显示月份": twelve["显示月份"].tolist()},
-        )
-        fig.update_xaxes(type="category")
-        fig.update_yaxes(tickprefix="RM ")
-        render_chart(fig, height=335)
-        st.caption("* 当前月份尚未结束，柱值为截至今天实际净支出。")
+        if twelve.empty:
+            empty_state("暂无追踪历史")
+        else:
+            fig = px.bar(
+                twelve,
+                x="显示月份",
+                y="支出",
+                text_auto=".0f",
+                category_orders={"显示月份": twelve["显示月份"].tolist()},
+            )
+            fig.update_xaxes(type="category")
+            fig.update_yaxes(tickprefix="RM ")
+            render_chart(fig, height=335)
+            notes = ["* 当前月份尚未结束，柱值为截至今天实际净支出。"]
+            if bool(twelve["是否首月不完整"].any()):
+                notes.append("† 账本在该月中途才开始追踪；追踪开始前月份不会显示成 RM0。")
+            elif len(twelve) < 12:
+                notes.append("只显示账本开始追踪后的月份；开始追踪前的月份属于未知覆盖。")
+            st.caption(" ".join(notes))
 
     with right:
         section_title("本月类别净支出")
