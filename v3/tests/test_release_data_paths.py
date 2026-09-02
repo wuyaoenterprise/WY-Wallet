@@ -15,30 +15,53 @@ def test_transactions_page_uses_database_optimistic_concurrency():
     assert "wy_wallet_delete_transaction" in source
     assert "p_expected_updated_at" in source
     assert "WY_WALLET_CONFLICT" in source
+    assert "physical_payload" in source
 
 
-def test_transactions_page_has_complete_card_paging_and_forced_refresh():
+def test_transactions_page_has_safe_paging_refresh_and_equal_metrics():
     source = _source("v3/wywallet/transactions_page.py")
-    assert 'key="oc_card_page"' in source
-    assert "filtered.iloc[start:start + page_size]" in source
+    assert 'page_slice("分页", "oc_table_page"' in source
+    assert 'page_slice("卡片分页", "oc_card_page"' in source
     assert "clear_snapshot_cache()" in source
     assert "a, b, c, d, e = st.columns(5" in source
+    assert "ranked_categories" in source
 
 
-def test_settings_page_uses_atomic_merge_and_mvcc_backup():
+def test_manual_entry_warns_on_exact_duplicates_without_blocking():
+    source = _source("v3/wywallet/transaction_commands.py")
+    assert "exact_duplicate_count" in source
+    assert "完全相同的交易" in source
+    assert "仍可保存" in source
+    assert "physical_payload" in source
+
+
+def test_settings_page_uses_atomic_merge_mvcc_backup_and_hardened_repair():
     source = _source("v3/wywallet/settings_page.py")
     assert "wy_wallet_merge_category" in source
     assert "full_backup_snapshot" in source
     assert "database_revision" in source
-    assert "fetch_stable_backup_snapshot" not in source
+    assert "wy_wallet_update_transaction" in source
+    assert "p_expected_updated_at" in source
+    assert "from . import db" in source
+    assert "web." not in source
+    assert "disabled=disabled" in source
+    assert '"build_id"' not in source
 
 
-def test_receipt_page_never_uses_multi_page_fresh_ledger_loader():
+def test_receipt_page_preserves_editor_state_and_structured_metadata():
     source = _source("v3/pages/receipt.py")
-    assert "current_snapshot" in source
-    assert "fresh_snapshot" in source
-    assert "fetch_transactions_interactive_fresh" not in source
-    assert "load_transactions" not in source
+    assert "receipt_draft_" in source
+    assert "_store_draft" in source
+    assert "_clear_target_editor_state" in source
+    assert "flow_subtype" in source
+    assert "physical_payload" in source
+    assert '.table("transactions").insert(payloads)' in source
+    assert "insert_transactions" not in source
+    assert "_date_future" in source
+    assert "AI 识别到未来日期" in source
+    assert "a, b, c, d, e = st.columns(5" in source
+    assert "BUILD_ID" not in source
+    assert "st.caption(APP_VERSION)" in source
 
 
 def test_main_app_routes_to_dedicated_hardened_pages():
@@ -47,7 +70,19 @@ def test_main_app_routes_to_dedicated_hardened_pages():
     assert "ai_page.render" in source
     assert "settings_page.render" in source
     assert "dashboard_page.render" in source
+    assert "reports_page.render" in source
     assert "web._dashboard" not in source
+    assert "web._reports_page" not in source
+
+
+def test_reports_page_avoids_misleading_partial_visuals():
+    source = _source("v3/wywallet/reports_page.py")
+    assert "_pie_with_other" in source
+    assert '"其余类别"' in source
+    assert '.nlargest(15, "_impact")' in source
+    assert "不绘制虚假的 0 元同比曲线" in source
+    assert "m1, m2, m3, m4, m5 = st.columns(5" in source
+    assert "a, b, c, d, e = st.columns(5" in source
 
 
 def test_new_transaction_uses_revision_guarded_fast_snapshot_patch():
@@ -58,6 +93,7 @@ def test_new_transaction_uses_revision_guarded_fast_snapshot_patch():
     assert "wy_wallet_get_ledger_revision" in snapshot
     assert "revision[\"revision\"] != old_revision" in snapshot
     assert "database_revision" in snapshot
+    assert "logical_type" in snapshot
 
 
 def test_main_app_uses_one_snapshot_without_nested_fragments():
@@ -81,15 +117,26 @@ def test_dashboard_month_window_is_calendar_anchored_and_equal_width():
     assert "category_orders" in source
 
 
-def test_metric_cards_have_consistent_minimum_height():
+def test_metric_cards_and_muted_text_are_theme_aware():
     source = _source("v3/wywallet/ui.py")
     assert "min-height:118px" in source
     assert "min-height:104px" in source
+    assert "color-mix" in source
+    assert "var(--text-color" in source
+
+
+def test_ai_chat_renders_user_message_immediately_and_clamps_lists():
+    source = _source("v3/wywallet/ai_page.py")
+    assert 'with st.chat_message("user")' in source
+    assert 'page_slice("分页", "ai_release_page"' in source
 
 
 def test_displayed_version_is_compact_semver_only():
     config = _source("v3/wywallet/config.py")
     app = _source("v3/app.py")
-    assert 'APP_VERSION = "v3.2.2"' in config
+    receipt = _source("v3/pages/receipt.py")
+    assert 'APP_VERSION = "v3.2.3"' in config
     assert "BUILD_ID" not in app
     assert "st.caption(APP_VERSION)" in app
+    assert "BUILD_ID" not in receipt
+    assert "st.caption(APP_VERSION)" in receipt
