@@ -6,12 +6,14 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from . import db, web
+from . import db
 from .access import touch_access
 from .backup import database_revision, full_backup_snapshot
-from .config import APP_VERSION, BACKUP_BUNDLE_TTL_SECONDS, BUILD_ID, EXPENSE, REFUND, TIMEZONE_NAME, now_my, today_my
+from .config import APP_VERSION, BACKUP_BUNDLE_TTL_SECONDS, EXPENSE, REFUND, TIMEZONE_NAME, TRANSACTION_TYPES, TYPE_LABELS, now_my, today_my
 from .exporting import build_backup_excel, safe_csv_bytes
+from .ledger_codec import physical_payload
 from .ui import page_header, section_title
+from .ux import ranked_categories
 
 
 def _rpc_object(data: Any) -> dict:
@@ -37,6 +39,7 @@ def _category_usage(transactions: pd.DataFrame, registered: set[str]) -> pd.Data
         .agg(使用笔数=("amount", "size"), 毛支出=("毛支出", "sum"), 退款=("退款", "sum"), 净支出=("净支出", "sum"))
         .reset_index()
         .rename(columns={"category": "类别"})
+        .sort_values(["使用笔数", "净支出"], ascending=[False, False])
     )
     usage["状态"] = usage["类别"].map(lambda value: "已登记" if str(value).casefold() in registered else "历史记录未登记")
     return usage
@@ -78,27 +81,100 @@ def _category_section(transactions: pd.DataFrame, categories: list[str]) -> None
 
     with right:
         section_title("改名或合并类别")
-        if not categories:
+        ordered = ranked_categories(categories, transactions)
+        if not ordered:
             st.info("暂无类别。")
             return
-        source = st.selectbox("原类别", categories, key="release_merge_source")
+        source = st.selectbox("原类别", ordered, key="release_merge_source")
         mode = st.radio("目标", ["现有类别", "新名称"], horizontal=True, key="release_merge_mode")
-        choices = [value for value in categories if value.casefold() != source.casefold()]
+        choices = [value for value in ordered if value.casefold() != source.casefold()]
         target = (
             st.selectbox("目标类别", choices, key="release_merge_target")
             if mode == "现有类别" and choices
             else st.text_input("新类别名称", key="release_merge_new")
         )
+        target_text = str(target or "").strip()
+        same_target = bool(target_text) and target_text.casefold() == source.casefold()
+        if same_target:
+            st.warning("目标类别不能与原类别相同。")
         confirmed = st.checkbox("我确认执行类别合并", key="release_merge_confirm")
-        if st.button("执行改名／合并", disabled=not confirmed, width="stretch", key="release_merge_submit"):
+        disabled = not confirmed or not target_text or same_target
+        if st.button("执行改名／合并", disabled=disabled, width="stretch", key="release_merge_submit"):
             try:
-                response = db.get_client().rpc("wy_wallet_merge_category", {"p_source": source, "p_target": target}).execute()
+                response = db.get_client().rpc("wy_wallet_merge_category", {"p_source": source, "p_target": target_text}).execute()
                 result = _rpc_object(response.data)
                 db.invalidate_data()
                 st.success(f"完成：移动 {int(result.get('moved_rows') or 0)} 笔交易。数据库已在同一个 transaction 内完成移动与类别清理。")
                 st.rerun()
             except Exception as exc:
                 st.error(f"合并失败：{exc}")
+
+
+@st.dialog("修复无效交易", width="large")
+def _repair_invalid_dialog(raw_row: dict) -> None:
+    touch_access()
+    try:
+        tx_id = int(raw_row.get("id"))
+    except Exception:
+        st.error("记录 ID 无效，无法通过网页安全更新。")
+        return
+    expected_updated_at = str(raw_row.get("updated_at") or "")
+    if not expected_updated_at:
+        st.error("这笔无效记录缺少并发版本信息，请先刷新数据后再修复。")
+        return
+
+    parsed_date = pd.to_datetime(raw_row.get("date"), errors="coerce")
+    default_date = today_my() if pd.isna(parsed_date) or parsed_date.date() > today_my() else parsed_date.date()
+    parsed_amount = pd.to_numeric(raw_row.get("amount"), errors="coerce")
+    default_amount = abs(float(parsed_amount)) if not pd.isna(parsed_amount) and float(parsed_amount) != 0 else 0.01
+    raw_type = str(raw_row.get("type") or "")
+    default_type = REFUND if raw_type == EXPENSE and not pd.isna(parsed_amount) and float(parsed_amount) < 0 else (raw_type if raw_type in TRANSACTION_TYPES else EXPENSE)
+
+    st.caption(f"当前问题：{raw_row.get('issues', '')}")
+    c1, c2 = st.columns(2)
+    tx_date = c1.date_input("日期", value=default_date, max_value=today_my(), key=f"release_repair_date_{tx_id}")
+    tx_type = c2.selectbox("类型", TRANSACTION_TYPES, index=TRANSACTION_TYPES.index(default_type), format_func=lambda value: TYPE_LABELS[value], key=f"release_repair_type_{tx_id}")
+    item = st.text_input("项目／商家", value=str(raw_row.get("item") or ""), key=f"release_repair_item_{tx_id}")
+    category = st.text_input("类别", value=str(raw_row.get("category") or ""), key=f"release_repair_cat_{tx_id}")
+    amount = st.number_input("金额", min_value=0.01, step=0.01, value=default_amount, key=f"release_repair_amount_{tx_id}")
+    note = st.text_area("备注", value=str(raw_row.get("note") or ""), key=f"release_repair_note_{tx_id}")
+
+    if not st.button("保存修复", type="primary", width="stretch", key=f"release_repair_submit_{tx_id}"):
+        return
+    try:
+        logical = db.normalize_transaction({
+            "date": tx_date,
+            "item": item,
+            "category": category,
+            "type": tx_type,
+            "amount": amount,
+            "note": note,
+            "receipt_id": str(raw_row.get("receipt_id") or ""),
+        })
+        payload = physical_payload(logical, str(raw_row.get("flow_subtype") or ""))
+        db.get_client().rpc("wy_wallet_update_transaction", {
+            "p_id": tx_id,
+            "p_expected_updated_at": expected_updated_at,
+            "p_date": payload["date"],
+            "p_item": payload["item"],
+            "p_category": payload["category"],
+            "p_type": payload["type"],
+            "p_amount": payload["amount"],
+            "p_note": payload["note"],
+            "p_receipt_id": payload.get("receipt_id"),
+            "p_flow_subtype": payload.get("flow_subtype"),
+        }).execute()
+        db.invalidate_data()
+        st.toast("无效交易已修复并重新纳入报表")
+        st.rerun()
+    except Exception as exc:
+        text = str(exc)
+        if "WY_WALLET_CONFLICT" in text or "40001" in text:
+            st.error("这笔无效记录已在其他页面被修改。为避免覆盖最新数据，请刷新后重新修复。")
+        elif "WY_WALLET_NOT_FOUND" in text or "P0002" in text:
+            st.error("这笔记录已经不存在，请刷新页面。")
+        else:
+            st.error(f"修复失败：{exc}")
 
 
 def _repair_section(invalid_rows: pd.DataFrame) -> None:
@@ -116,7 +192,7 @@ def _repair_section(invalid_rows: pd.DataFrame) -> None:
     if row_map:
         selected = st.selectbox("选择无效记录进行修复", list(row_map), format_func=lambda value: f"ID {value} · {row_map[value].get('item', '')} · {row_map[value].get('issues', '')}", key="release_invalid_select")
         if st.button("打开修复表单", type="primary", width="stretch", key="release_invalid_open"):
-            web.repair_invalid_dialog(row_map[selected])
+            _repair_invalid_dialog(row_map[selected])
     st.download_button("下载无效记录 CSV", safe_csv_bytes(invalid_rows), f"WY_Wallet_V3_invalid_{today_my()}.csv", mime="text/csv", width="stretch")
 
 
@@ -143,27 +219,25 @@ def _backup_section() -> None:
                 if not export.empty:
                     export["date"] = export["date"].dt.date
                 category_df = pd.DataFrame({"name": snap["categories"]})
-                invalid_rows = snap["invalid"]
+                invalid = snap["invalid"]
                 metadata = pd.DataFrame([
                     ["export_time", now_my().isoformat()],
                     ["timezone", TIMEZONE_NAME],
                     ["currency", "MYR"],
                     ["valid_transaction_count", len(export)],
-                    ["invalid_transaction_count", len(invalid_rows)],
+                    ["invalid_transaction_count", len(invalid)],
                     ["registered_or_used_category_count", len(category_df)],
                     ["app_version", APP_VERSION],
-                    ["build_id", BUILD_ID],
                     ["database_revision", snap["database_revision"]],
                     ["database_revision_updated_at", snap["database_revision_updated_at"]],
                 ], columns=["key", "value"])
                 st.session_state["backup_bundle"] = {
-                    "excel": build_backup_excel(export, category_df, metadata, invalid_rows),
+                    "excel": build_backup_excel(export, category_df, metadata, invalid),
                     "csv": safe_csv_bytes(export),
                     "time": now_my().isoformat(timespec="seconds"),
                     "created_ts": time.time(),
                     "database_revision": int(snap["database_revision"]),
                 }
-                bundle = st.session_state["backup_bundle"]
         except Exception as exc:
             st.error(f"准备备份失败：{exc}")
 
