@@ -7,6 +7,7 @@ import streamlit as st
 from . import analytics
 from .access import touch_access
 from .config import EXPENSE, REFUND, now_my
+from .coverage import historical_month_end_forecast, safe_change_ratio
 from .ui import empty_state, money, page_header, render_chart, section_title
 
 
@@ -51,7 +52,7 @@ def _recent_months_summary(frame: pd.DataFrame, periods: int = 12) -> pd.DataFra
 
 def render(transactions: pd.DataFrame) -> None:
     touch_access()
-    page_header("财务总览", "净支出自动扣除退款；月度变化使用上月同期，月底预测使用近期历史剩余日期模式。")
+    page_header("财务总览", "净支出自动扣除退款；月度变化使用上月同期，月底预测只使用完整追踪历史。")
 
     now = now_my()
     current = analytics.month_slice(transactions, now.year, now.month)
@@ -61,16 +62,23 @@ def render(transactions: pd.DataFrame) -> None:
     income, expense, balance = analytics.calculate_totals(current)
     _, prior_expense, _ = analytics.calculate_totals(previous_same_period)
     flows = analytics.calculate_flow_totals(current)
-    change = None if prior_expense == 0 else (expense - prior_expense) / abs(prior_expense)
-    forecast = analytics.historical_month_end_forecast(transactions, now.year, now.month, now.day)
+    change = safe_change_ratio(expense, prior_expense)
+    forecast = historical_month_end_forecast(transactions, now.year, now.month, now.day)
+
+    if change is not None:
+        comparison_delta = f"{change:+.1%} 对比上月同期"
+    elif previous_same_period.empty:
+        comparison_delta = "无上月同期交易"
+    else:
+        comparison_delta = "上月同期净支出≤0，百分比不适用"
 
     m1, m2, m3, m4, m5 = st.columns(5, gap="small")
     m1.metric("本月收入", money(income))
     m2.metric(
         "本月净支出",
         money(expense),
-        "无上月同期数据" if change is None else f"{change:+.1%} 对比上月同期",
-        delta_color="inverse",
+        comparison_delta,
+        delta_color="inverse" if change is not None else "off",
     )
     m3.metric("本月结余", money(balance))
     m4.metric("本月退款", money(flows["refund"]))
@@ -79,7 +87,7 @@ def render(transactions: pd.DataFrame) -> None:
         money(float(forecast["forecast"])),
         f"历史中位数 · {forecast['history_months']}个月样本"
         if forecast["history_months"]
-        else "历史样本不足，以当前实际为准",
+        else "完整历史样本不足，以当前实际为准",
         delta_color="off",
     )
     if forecast.get("history_months"):
