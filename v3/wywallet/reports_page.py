@@ -7,6 +7,13 @@ import streamlit as st
 from . import analytics
 from .access import touch_access
 from .config import EXPENSE, REFUND, now_my
+from .coverage import (
+    historical_month_end_forecast,
+    is_partial_tracking_year,
+    prior_year_has_partial_coverage,
+    same_period_yoy,
+    tracked_annual_view,
+)
 from .product_logic import first_complete_tracking_month, historical_monthly_average, invalid_quality_for_year, recurring_items_by_category, tracking_start_date
 from .ui import empty_state, money, page_header, render_chart, section_title
 
@@ -24,7 +31,7 @@ def _pie_with_other(category_summary: pd.DataFrame, top_n: int = 8) -> pd.DataFr
 
 def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
     touch_access()
-    page_header("分析报表", "退款会抵减对应类别支出；当前年度只显示截至今天已发生的数据。")
+    page_header("分析报表", "退款会抵减对应类别支出；未开始记账的月份视为未知覆盖，不会伪装成 0 元。")
     if transactions.empty:
         empty_state("暂无有效数据可分析")
         return
@@ -36,40 +43,59 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
     year_all = transactions[transactions["date"].dt.year == year].copy()
     elapsed = analytics.elapsed_month_count(year)
     current_year = year == now.year
-    display_annual = annual[annual["month"] <= elapsed].copy() if current_year else annual.copy()
+    display_annual = tracked_annual_view(
+        annual,
+        year,
+        transactions,
+        through_month=elapsed if current_year else None,
+    )
 
     annual_expense = float(display_annual["支出"].sum())
     annual_income = float(display_annual["收入"].sum())
     annual_refund = float(display_annual["退款"].sum())
     monthly_avg = historical_monthly_average(annual, year, transactions)
-    savings = analytics.annual_savings_rate(annual)
-    yoy = analytics.same_period_yoy(transactions, year)
+    savings = analytics.annual_savings_rate(display_annual)
+    yoy = same_period_yoy(transactions, year)
     highest = display_annual.loc[display_annual["支出"].idxmax()] if not display_annual.empty else None
     first = tracking_start_date(transactions)
     first_complete = first_complete_tracking_month(transactions, year)
+    partial_history_year = is_partial_tracking_year(transactions, year)
     if current_year:
         if first_complete is not None and first_complete <= now.month - 1:
             avg_label = "完整追踪月份月均"
         else:
             avg_label = f"{now.month}月截至目前"
     else:
-        partial_history_year = first is not None and first.year == year and (first.month > 1 or first.day > 1)
         avg_label = "完整追踪月份月均" if partial_history_year else "全年月均"
-    prefix = "截至目前" if current_year else "年度"
-    yoy_text = "无同期数据" if not yoy or yoy["change"] is None else f"{yoy['change']:+.1%} 同期同比"
+    prefix = "截至目前" if current_year else ("追踪期" if partial_history_year else "年度")
+    savings_label = "追踪期储蓄率" if partial_history_year else "储蓄率"
+    if not yoy or yoy.get("change") is None:
+        yoy_text = "无可比同期" if yoy and yoy.get("reason") else "无有效同比基数"
+    else:
+        suffix = "可比区间同比" if yoy.get("coverage_aligned") else "同期同比"
+        yoy_text = f"{yoy['change']:+.1%} {suffix}"
 
     m1, m2, m3, m4, m5 = st.columns(5, gap="small")
-    m1.metric(f"{prefix}净支出", money(annual_expense), yoy_text, delta_color="inverse")
+    m1.metric(
+        f"{prefix}净支出",
+        money(annual_expense),
+        yoy_text,
+        delta_color="inverse" if yoy and yoy.get("change") is not None else "off",
+    )
     m2.metric(f"{prefix}收入", money(annual_income))
     m3.metric(f"{prefix}退款", money(annual_refund))
     m4.metric(avg_label, "N/A" if monthly_avg is None else money(monthly_avg))
-    m5.metric("储蓄率", "N/A" if savings is None else f"{savings:.1f}%")
+    m5.metric(savings_label, "N/A" if savings is None else f"{savings:.1f}%")
     if highest is not None and float(highest["支出"]) > 0:
         st.caption(f"最高净支出月份：{highest['月份']} · {money(highest['支出'])}")
     elif highest is not None:
-        st.caption("本年度没有正净支出月份。")
+        st.caption("本追踪区间没有正净支出月份。")
     if yoy:
-        st.caption(f"同比口径：{yoy['current_start']}–{yoy['current_end']} 对比 {yoy['previous_start']}–{yoy['previous_end']}。")
+        if yoy.get("reason"):
+            st.caption("同比不可用：" + str(yoy["reason"]))
+        else:
+            qualifier = "共同追踪覆盖期：" if yoy.get("coverage_aligned") else "同比口径："
+            st.caption(f"{qualifier}{yoy['current_start']}–{yoy['current_end']} 对比 {yoy['previous_start']}–{yoy['previous_end']}。")
     if first is not None and first.year == year:
         if first.day > 1:
             if first_complete is not None:
@@ -95,18 +121,23 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
             section_title("每月净支出")
             chart_annual = display_annual.copy()
             chart_annual["显示月份"] = chart_annual["月份"]
+            if first is not None and first.year == year and first.day > 1 and not chart_annual.empty:
+                mask = chart_annual["month"] == first.month
+                chart_annual.loc[mask, "显示月份"] = chart_annual.loc[mask, "显示月份"] + "†"
             if current_year and not chart_annual.empty:
                 mask = chart_annual["month"] == now.month
-                chart_annual.loc[mask, "显示月份"] = chart_annual.loc[mask, "月份"] + "*"
+                chart_annual.loc[mask, "显示月份"] = chart_annual.loc[mask, "显示月份"] + "*"
             fig = px.bar(chart_annual, x="显示月份", y="支出", text_auto=".0f")
             if monthly_avg is not None:
                 fig.add_hline(y=monthly_avg, line_dash="dash", annotation_text=f"月均 {money(monthly_avg)}")
             fig.update_yaxes(tickprefix="RM ")
             render_chart(fig, height=390)
+            if first is not None and first.year == year and first.day > 1:
+                st.caption(f"† {first.month}月只从 {first:%m-%d} 开始追踪；追踪开始前月份不显示为 0 元。")
             if current_year:
                 st.caption("* 当前月份尚未结束，数值为截至今天实际净支出。")
         with right:
-            section_title("年度类别净支出")
+            section_title(f"{prefix}类别净支出")
             category_summary = analytics.net_expense_by_category(year_all)
             pie = _pie_with_other(category_summary)
             negative = category_summary[category_summary["amount"] < 0]
@@ -115,9 +146,9 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
             else:
                 render_chart(px.pie(pie, values="amount", names="category", hole=.56), height=390, legend=True, hovermode="closest")
                 if len(category_summary[category_summary["amount"] > 0]) > 8:
-                    st.caption("饼图显示前 8 个类别，并将其余正净支出合并为「其余类别」，百分比仍代表全年完整正净支出。")
+                    st.caption("饼图显示前 8 个类别，并将其余正净支出合并为「其余类别」，百分比仍代表完整正净支出。")
             if not negative.empty:
-                st.caption("本年度净退款类别：" + "；".join(f"{row['category']} {money(-row['amount'])}" for _, row in negative.head(6).iterrows()))
+                st.caption(f"{prefix}净退款类别：" + "；".join(f"{row['category']} {money(-row['amount'])}" for _, row in negative.head(6).iterrows()))
 
     elif section == "年度趋势":
         section_title("收入、净支出与结余")
@@ -130,6 +161,11 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
         prior_rows = transactions[transactions["date"].dt.year == year - 1]
         if prior_rows.empty:
             st.info(f"{year - 1} 年没有账本数据，因此不绘制虚假的 0 元同比曲线。")
+        elif prior_year_has_partial_coverage(transactions, year):
+            st.info(
+                f"{year - 1} 年是账本开始追踪的部分年度，因此不把未追踪月份补成 0 来绘制累计同比。"
+                "上方 KPI 若存在可比数据，已经按双方都有覆盖的共同日期区间计算。"
+            )
         else:
             prior = analytics.monthly_summary(transactions, year - 1)
             prior = prior[prior["month"] <= elapsed].copy() if current_year else prior
@@ -141,14 +177,27 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
             render_chart(fig, height=350, legend=True)
 
     elif section == "月度明细":
-        month_options = list(range(1, now.month + 1)) if current_year else list(range(1, 13))
-        default_month_index = len(month_options) - 1 if current_year else min(now.month - 1, 11)
+        start_month = first.month if first is not None and first.year == year else 1
+        end_month = now.month if current_year else 12
+        month_options = list(range(start_month, end_month + 1))
+        if not month_options:
+            st.info("这个年份尚无可查看的追踪月份。")
+            return
+        if current_year:
+            default_month_index = len(month_options) - 1
+        elif now.month in month_options:
+            default_month_index = month_options.index(now.month)
+        else:
+            default_month_index = len(month_options) - 1
         month = int(st.selectbox("选择月份", month_options, index=default_month_index, format_func=lambda value: f"{value}月", key="report_month"))
         selected = analytics.month_slice(transactions, year, month)
         income, expense, balance = analytics.calculate_totals(selected)
         flows = analytics.calculate_flow_totals(selected)
         is_current_month = current_year and month == now.month
-        forecast = analytics.historical_month_end_forecast(transactions, year, month, now.day) if is_current_month else None
+        forecast = historical_month_end_forecast(transactions, year, month, now.day) if is_current_month else None
+
+        if first is not None and first.year == year and first.month == month and first.day > 1:
+            st.info(f"该月从 {first:%Y-%m-%d} 才开始记账，因此这里只显示实际追踪到的数据，不代表完整自然月。")
 
         a, b, c, d, e = st.columns(5, gap="small")
         a.metric("收入", money(income))
@@ -158,7 +207,7 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
         e.metric(
             "月底历史预测" if is_current_month else "实际净支出",
             money(float(forecast["forecast"]) if forecast else expense),
-            f"{forecast['history_months']}个月样本" if forecast and forecast["history_months"] else "实际",
+            f"{forecast['history_months']}个月完整样本" if forecast and forecast["history_months"] else "实际",
             delta_color="off",
         )
         if forecast and forecast.get("history_months"):
