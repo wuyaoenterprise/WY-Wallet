@@ -7,7 +7,7 @@ import streamlit as st
 from . import analytics
 from .access import touch_access
 from .config import EXPENSE, REFUND, now_my
-from .product_logic import historical_monthly_average, invalid_quality_for_year, recurring_items_by_category, tracking_start_date
+from .product_logic import first_complete_tracking_month, historical_monthly_average, invalid_quality_for_year, recurring_items_by_category, tracking_start_date
 from .ui import empty_state, money, page_header, render_chart, section_title
 
 
@@ -46,15 +46,15 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
     yoy = analytics.same_period_yoy(transactions, year)
     highest = display_annual.loc[display_annual["支出"].idxmax()] if not display_annual.empty else None
     first = tracking_start_date(transactions)
+    first_complete = first_complete_tracking_month(transactions, year)
     if current_year:
-        if first is not None and first.year == year and first.month >= now.month:
-            avg_label = f"{now.month}月截至目前"
-        elif now.month > 1:
-            avg_label = "已完成追踪月份月均"
+        if first_complete is not None and first_complete <= now.month - 1:
+            avg_label = "完整追踪月份月均"
         else:
-            avg_label = "1月截至目前"
+            avg_label = f"{now.month}月截至目前"
     else:
-        avg_label = "追踪期间月均" if first is not None and first.year == year and first.month > 1 else "全年月均"
+        partial_history_year = first is not None and first.year == year and (first.month > 1 or first.day > 1)
+        avg_label = "完整追踪月份月均" if partial_history_year else "全年月均"
     prefix = "截至目前" if current_year else "年度"
     yoy_text = "无同期数据" if not yoy or yoy["change"] is None else f"{yoy['change']:+.1%} 同期同比"
 
@@ -64,12 +64,23 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
     m3.metric(f"{prefix}退款", money(annual_refund))
     m4.metric(avg_label, "N/A" if monthly_avg is None else money(monthly_avg))
     m5.metric("储蓄率", "N/A" if savings is None else f"{savings:.1f}%")
-    if highest is not None:
+    if highest is not None and float(highest["支出"]) > 0:
         st.caption(f"最高净支出月份：{highest['月份']} · {money(highest['支出'])}")
+    elif highest is not None:
+        st.caption("本年度没有正净支出月份。")
     if yoy:
         st.caption(f"同比口径：{yoy['current_start']}–{yoy['current_end']} 对比 {yoy['previous_start']}–{yoy['previous_end']}。")
-    if first is not None and first.year == year and first.month > 1:
-        st.caption(f"{year} 年账本从 {first:%Y-%m-%d} 开始，因此月均只按实际追踪月份计算，不把追踪开始前的月份当作 0 元月份。")
+    if first is not None and first.year == year:
+        if first.day > 1:
+            if first_complete is not None:
+                st.caption(
+                    f"{year} 年账本从 {first:%Y-%m-%d} 开始；{first.month}月是不完整追踪月，"
+                    f"因此月均从 {first_complete} 月起按完整月份计算，追踪开始前的月份也不当作 0 元。"
+                )
+            else:
+                st.caption(f"{year} 年账本从 {first:%Y-%m-%d} 开始且没有完整追踪月份，因此不把该不完整月份伪装成整月平均。")
+        elif first.month > 1:
+            st.caption(f"{year} 年账本从 {first:%Y-%m-%d} 开始，因此月均只按实际完整追踪月份计算，不把追踪开始前的月份当作 0 元月份。")
 
     section = st.segmented_control(
         "报表区块",
