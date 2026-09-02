@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -13,8 +14,9 @@ if str(V3_ROOT) not in sys.path:
 
 from wywallet.access import render_lock_button, require_access, touch_access
 from wywallet.ai import recognize_receipt
-from wywallet.config import APP_TITLE, APP_VERSION, BUILD_ID, EXPENSE, REFUND, today_my
-from wywallet.db import create_category, insert_transactions, transaction_duplicate_key
+from wywallet.config import APP_TITLE, APP_VERSION, EXPENSE, REFUND, today_my
+from wywallet.db import create_category, get_client, invalidate_data, normalize_transaction, transaction_duplicate_key
+from wywallet.ledger_codec import physical_payload
 from wywallet.receipt import (
     evaluate_receipt_candidates,
     finalize_receipt_candidates,
@@ -24,11 +26,21 @@ from wywallet.receipt import (
 from wywallet.receipt_identity import add_line_ids, receipt_already_exists, receipt_root_id
 from wywallet.snapshot import current_snapshot, fresh_snapshot
 from wywallet.ui import inject_css, money, page_header
+from wywallet.ux import ranked_categories
 
 st.set_page_config(page_title=f"AI 收据识别 · {APP_TITLE}", page_icon="📷", layout="wide")
 inject_css()
 require_access()
 touch_access()
+
+_DRAFT_COLUMNS = [
+    "保存", "日期已确认", "仍然保存重复", "date", "item", "category", "type",
+    "amount", "note", "receipt_id", "flow_subtype",
+]
+
+
+def _draft_key(signature: str) -> str:
+    return f"receipt_draft_{signature}"
 
 
 def _prepare_frame(rows: list[dict], categories: list[str], fallback_category: str) -> pd.DataFrame:
@@ -41,12 +53,20 @@ def _prepare_frame(rows: list[dict], categories: list[str], fallback_category: s
         "amount": None,
         "note": "",
         "receipt_id": "",
+        "flow_subtype": None,
     }.items():
         if column not in frame:
             frame[column] = default
+
     parsed_dates = pd.to_datetime(frame["date"], errors="coerce")
-    frame["_date_missing"] = parsed_dates.isna()
-    frame["date"] = parsed_dates.fillna(pd.Timestamp(today_my()))
+    future = parsed_dates.notna() & (parsed_dates.dt.date > today_my())
+    needs_confirmation = parsed_dates.isna() | future
+    safe_dates = parsed_dates.copy()
+    safe_dates.loc[needs_confirmation] = pd.Timestamp(today_my())
+    frame["_date_future"] = future
+    frame["_date_missing"] = needs_confirmation
+    frame["date"] = safe_dates
+
     category_map = {str(category).casefold(): str(category) for category in categories}
     frame["category"] = frame["category"].fillna("").astype(str).map(
         lambda value: category_map.get(value.strip().casefold(), fallback_category)
@@ -54,9 +74,42 @@ def _prepare_frame(rows: list[dict], categories: list[str], fallback_category: s
     frame["type"] = frame["type"].where(frame["type"].isin([EXPENSE, REFUND]), EXPENSE)
     frame["amount"] = pd.to_numeric(frame["amount"], errors="coerce")
     frame.insert(0, "仍然保存重复", False)
-    frame.insert(0, "日期已确认", (~frame["_date_missing"]).tolist())
+    frame.insert(0, "日期已确认", (~needs_confirmation).tolist())
     frame.insert(0, "保存", True)
     return frame
+
+
+def _initial_draft(frame: pd.DataFrame, signature: str) -> pd.DataFrame:
+    key = _draft_key(signature)
+    if key not in st.session_state:
+        st.session_state[key] = frame[_DRAFT_COLUMNS].to_dict("records")
+    records = st.session_state.get(key) or []
+    draft = pd.DataFrame(records)
+    for column in _DRAFT_COLUMNS:
+        if column not in draft:
+            draft[column] = None
+    return draft[_DRAFT_COLUMNS].copy()
+
+
+def _store_draft(signature: str, frame: pd.DataFrame) -> None:
+    work = frame.copy()
+    for column in _DRAFT_COLUMNS:
+        if column not in work:
+            work[column] = None
+    st.session_state[_draft_key(signature)] = work[_DRAFT_COLUMNS].to_dict("records")
+
+
+def _clear_target_editor_state(signature: str, mode: str) -> None:
+    if mode == "表格":
+        st.session_state.pop(f"receipt_editor_release_{signature}", None)
+        return
+    prefixes = [
+        "receipt_keep_", "receipt_date_ok_", "receipt_force_", "receipt_date_",
+        "receipt_type_", "receipt_item_", "receipt_category_", "receipt_amount_", "receipt_note_",
+    ]
+    for key in list(st.session_state):
+        if any(str(key).startswith(prefix) for prefix in prefixes) and f"_{signature}_" in str(key):
+            st.session_state.pop(key, None)
 
 
 def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> pd.DataFrame:
@@ -76,23 +129,21 @@ def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> 
                 key=f"receipt_date_{signature}_{index}",
             )
             tx_type = d2.selectbox(
-                "类型",
-                [EXPENSE, REFUND],
-                index=0 if row["type"] == EXPENSE else 1,
+                "类型", [EXPENSE, REFUND], index=0 if row["type"] == EXPENSE else 1,
                 key=f"receipt_type_{signature}_{index}",
             )
             item = st.text_input("项目／商家", value=str(row.get("item") or ""), key=f"receipt_item_{signature}_{index}")
             e1, e2 = st.columns(2)
+            options = list(categories)
+            current_category = str(row.get("category") or "")
+            if current_category and current_category not in options:
+                options.insert(0, current_category)
             category = e1.selectbox(
-                "类别",
-                categories,
-                index=categories.index(row["category"]) if row["category"] in categories else 0,
+                "类别", options, index=options.index(current_category) if current_category in options else 0,
                 key=f"receipt_category_{signature}_{index}",
             )
             amount = e2.number_input(
-                "金额 (RM)",
-                min_value=0.01,
-                step=0.01,
+                "金额 (RM)", min_value=0.01, step=0.01,
                 value=float(row["amount"]) if not pd.isna(row["amount"]) else 0.01,
                 key=f"receipt_amount_{signature}_{index}",
             )
@@ -108,8 +159,11 @@ def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> 
                 "amount": amount,
                 "note": note,
                 "receipt_id": str(row.get("receipt_id") or ""),
+                "flow_subtype": str(row.get("flow_subtype") or "").strip() or None,
             })
-    return pd.DataFrame(edited_rows)
+    edited = pd.DataFrame(edited_rows)
+    _store_draft(signature, edited)
+    return edited
 
 
 def _duplicate_keys(frame: pd.DataFrame) -> set[tuple]:
@@ -122,8 +176,20 @@ def _duplicate_keys(frame: pd.DataFrame) -> set[tuple]:
     return keys
 
 
+def _insert_receipt_rows(rows: list[dict]) -> int:
+    payloads: list[dict] = []
+    for row in rows:
+        logical = normalize_transaction(row)
+        payloads.append(physical_payload(logical, str(row.get("flow_subtype") or "")))
+    if not payloads:
+        raise ValueError("没有可保存的记录。")
+    get_client().table("transactions").insert(payloads).execute()
+    invalidate_data()
+    return len(payloads)
+
+
 page_header("📷 AI 收据识别", "Gemini 负责提取；最终日期、金额、重复项和保存范围全部由本地逻辑验证。")
-st.caption(f"{APP_VERSION} · {BUILD_ID}")
+st.caption(APP_VERSION)
 st.page_link("app.py", label="← 返回 WY Wallet", width="content")
 with st.sidebar:
     render_lock_button()
@@ -133,7 +199,7 @@ loading.info("正在读取现有账本与类别…")
 try:
     snap = current_snapshot()
     transactions = snap["transactions"]
-    categories = snap["categories"]
+    categories = ranked_categories(snap["categories"], transactions)
 except Exception as exc:
     loading.empty()
     st.error(f"无法读取 Supabase：{exc}")
@@ -158,6 +224,7 @@ image_signature = hashlib.sha256(raw).hexdigest()[:20]
 if st.session_state.get("receipt_signature") != image_signature:
     st.session_state["receipt_signature"] = image_signature
     st.session_state.pop("receipt_result", None)
+    st.session_state.pop(_draft_key(image_signature), None)
 
 preview, action = st.columns([1, 1.25], gap="large")
 with preview:
@@ -170,11 +237,13 @@ with action:
             with st.spinner("正在识别收据…"):
                 result = recognize_receipt(raw, mime, categories, instruction.strip())
             st.session_state["receipt_result"] = result.model_dump()
+            st.session_state.pop(_draft_key(image_signature), None)
             st.rerun()
         except Exception as exc:
             st.error(f"收据识别失败：{exc}")
     if st.button("清除识别结果", width="stretch"):
         st.session_state.pop("receipt_result", None)
+        st.session_state.pop(_draft_key(image_signature), None)
         st.rerun()
 
 payload = st.session_state.get("receipt_result")
@@ -199,12 +268,8 @@ tax = float(payload.get("tax") or 0)
 service_charge = float(payload.get("service_charge") or 0)
 discount = float(payload.get("discount") or 0)
 rows = materialize_receipt_adjustments(
-    base_rows,
-    tax=tax,
-    service_charge=service_charge,
-    discount=discount,
-    fallback_category=fallback_category,
-    receipt_id=root_id,
+    base_rows, tax=tax, service_charge=service_charge, discount=discount,
+    fallback_category=fallback_category, receipt_id=root_id,
 )
 rows = add_line_ids(rows, root_id)
 if tax or service_charge or discount:
@@ -215,8 +280,12 @@ if payload.get("merchant") or payload.get("receipt_number"):
     ))
 
 frame = _prepare_frame(rows, categories, fallback_category)
+if bool(frame.get("_date_future", pd.Series(dtype=bool)).any()):
+    st.warning("AI 识别到未来日期。系统已暂时改为今天并取消日期确认，请人工核对正确日期后再保存。")
+draft = _initial_draft(frame, image_signature)
+
 st.subheader("检查并修改")
-st.caption("手机默认使用卡片编辑；日期看不清时会暂填今天，但必须人工确认。")
+st.caption("手机默认使用卡片编辑；日期看不清或识别成未来日期时会暂填今天，但必须人工确认。")
 new_cat_col, create_col = st.columns([2, 1])
 new_cat = new_cat_col.text_input("需要新类别时先建立", placeholder="例如：宠物")
 if create_col.button("＋ 建立类别", width="stretch"):
@@ -228,10 +297,16 @@ if create_col.button("＋ 建立类别", width="stretch"):
         st.error(f"建立类别失败：{exc}")
 
 mode = st.segmented_control("编辑方式", ["卡片", "表格"], default="卡片", key="receipt_edit_mode_release")
+last_mode_key = f"receipt_last_mode_{image_signature}"
+last_mode = st.session_state.get(last_mode_key)
+if last_mode and last_mode != mode:
+    _clear_target_editor_state(image_signature, mode)
+st.session_state[last_mode_key] = mode
+
 if mode == "卡片":
-    edited = _card_editor(frame, categories, image_signature)
+    edited = _card_editor(draft, categories, image_signature)
 else:
-    visible = frame[["保存", "日期已确认", "仍然保存重复", "date", "item", "category", "type", "amount", "note", "receipt_id"]].copy()
+    visible = draft[_DRAFT_COLUMNS].copy()
     edited = st.data_editor(
         visible,
         hide_index=True,
@@ -248,10 +323,12 @@ else:
             "amount": st.column_config.NumberColumn("金额", min_value=0.01, format="RM %.2f", required=True),
             "note": st.column_config.TextColumn("备注", width="large"),
             "receipt_id": None,
+            "flow_subtype": None,
         },
         key=f"receipt_editor_release_{image_signature}",
     )
     edited = pd.DataFrame(add_line_ids(edited.to_dict("records"), root_id))
+    _store_draft(image_signature, edited)
 
 existing = _duplicate_keys(transactions)
 statuses, candidates = evaluate_receipt_candidates(edited, existing)
@@ -268,8 +345,7 @@ duplicate_blocked = sum(status == "疑似重复（未保存）" for status in st
 needs_date = sum(status == "需确认日期" for status in statuses)
 expense_total = sum(candidate.normalized["amount"] for candidate in candidates if candidate.normalized["type"] == EXPENSE)
 refund_total = sum(candidate.normalized["amount"] for candidate in candidates if candidate.normalized["type"] == REFUND)
-a, b, c = st.columns(3)
-d, e = st.columns(2)
+a, b, c, d, e = st.columns(5, gap="small")
 a.metric("准备保存", f"{len(candidates)} 笔")
 b.metric("重复待确认", f"{duplicate_blocked} 笔")
 c.metric("日期待确认", f"{needs_date} 笔")
@@ -313,8 +389,12 @@ if st.button(
         if not final_rows:
             st.warning("没有可新增的记录。")
             st.stop()
-        saved = insert_transactions(final_rows)
+        if already_saved and force_whole_receipt:
+            duplicate_root = hashlib.sha256(f"{root_id}:{uuid.uuid4()}".encode("utf-8")).hexdigest()[:16]
+            final_rows = add_line_ids(final_rows, duplicate_root)
+        saved = _insert_receipt_rows(final_rows)
         st.session_state.pop("receipt_result", None)
+        st.session_state.pop(_draft_key(image_signature), None)
         st.toast(f"成功保存 {saved} 笔交易")
         st.balloons()
         st.rerun()
