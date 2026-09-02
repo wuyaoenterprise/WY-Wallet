@@ -86,6 +86,8 @@ def test_receipt_page_recomputes_identity_after_human_edits_and_scopes_confirmat
     assert 'key=f"receipt_difference_confirm_{image_signature}"' in source
     assert 'key=f"receipt_final_confirm_{image_signature}"' in source
     assert 'edited["仍然保存重复"] = edited["保存"]' in source
+    assert "receipt_presence" in source
+    assert "partial_saved" in source
     assert "_clear_receipt_session_state(previous_signature)" in source
     assert source.count("_clear_receipt_session_state(image_signature)") >= 4
 
@@ -111,6 +113,8 @@ def test_reports_page_avoids_misleading_partial_visuals():
     assert "m1, m2, m3, m4, m5 = st.columns(5" in source
     assert "a, b, c, d, e = st.columns(5" in source
     assert "historical_monthly_average" in source
+    assert "first_complete_tracking_month" in source
+    assert "本年度没有正净支出月份" in source
     assert "recurring_items_by_category" in source
     assert "invalid_quality_for_year" in source
     assert "无效日期无法归年" in source
@@ -155,6 +159,8 @@ def test_metric_cards_and_muted_text_are_theme_aware():
     assert "min-height:104px" in source
     assert "color-mix" in source
     assert "var(--text-color" in source
+    assert "flex-wrap:wrap!important" in source
+    assert "overflow:visible" in source
 
 
 def test_ai_chat_renders_user_message_immediately_and_clamps_lists():
@@ -167,7 +173,7 @@ def test_displayed_version_is_compact_semver_only():
     config = _source("v3/wywallet/config.py")
     app = _source("v3/app.py")
     receipt = _source("v3/pages/receipt.py")
-    assert 'APP_VERSION = "v3.2.4"' in config
+    assert 'APP_VERSION = "v3.2.5"' in config
     assert "BUILD_ID" not in app
     assert "st.caption(APP_VERSION)" in app
     assert "BUILD_ID" not in receipt
