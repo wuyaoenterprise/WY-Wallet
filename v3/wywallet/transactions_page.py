@@ -9,7 +9,7 @@ import streamlit as st
 from . import analytics, db
 from .access import touch_access
 from .config import ADD_CATEGORY_OPTION, EXPENSE, INCOME, REFUND, REFUND_DB_MARKER, TRANSACTION_TYPES, TYPE_LABELS, today_my
-from .snapshot import fresh_snapshot
+from .snapshot import clear_snapshot_cache, fresh_snapshot
 from .transaction_commands import add_transaction_dialog
 from .ui import money, page_header
 
@@ -210,7 +210,12 @@ def _render_cards(filtered: pd.DataFrame, categories: list[str]) -> None:
     if filtered.empty:
         st.info("没有符合条件的交易。")
         return
-    for _, series in filtered.head(30).iterrows():
+    page_size = 30
+    page_count = max(1, (len(filtered) + page_size - 1) // page_size)
+    page_no = int(st.selectbox("卡片分页", range(1, page_count + 1), format_func=lambda value: f"第 {value}/{page_count} 页", key="oc_card_page")) if page_count > 1 else 1
+    start = (page_no - 1) * page_size
+    page = filtered.iloc[start:start + page_size]
+    for _, series in page.iterrows():
         row = series.to_dict()
         with st.container(border=True):
             left, right = st.columns([3, 1.2])
@@ -241,13 +246,13 @@ def render(transactions: pd.DataFrame, categories: list[str]) -> None:
             st.error(f"撤销失败：{exc}。撤销快照仍保留，可再次尝试。")
     if refresh.button("↻ 刷新", width="stretch", key="oc_refresh"):
         db.refresh_data()
+        clear_snapshot_cache()
         st.rerun()
 
     filtered = _filters(transactions, categories)
     income, expense, balance = analytics.calculate_totals(filtered)
     flows = analytics.calculate_flow_totals(filtered)
-    a, b, c = st.columns(3)
-    d, e = st.columns(2)
+    a, b, c, d, e = st.columns(5, gap="small")
     a.metric("筛选结果", f"{len(filtered):,} 笔")
     b.metric("净支出", money(expense))
     c.metric("收入", money(income))
