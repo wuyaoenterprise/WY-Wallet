@@ -4,7 +4,7 @@ from datetime import date
 
 import pandas as pd
 
-from wywallet import ai_release
+from wywallet import ai_release, product_logic
 from wywallet.ai import FinanceQueryPlan
 
 
@@ -47,6 +47,7 @@ def test_nonpositive_comparison_base_has_no_percent(monkeypatch):
 
 def test_current_month_excluded_from_ytd_monthly_average_even_on_last_day(monkeypatch):
     monkeypatch.setattr(ai_release, "today_my", lambda: date(2026, 9, 30))
+    monkeypatch.setattr(product_logic, "today_my", lambda: date(2026, 9, 30))
     frame = _frame([
         {"date": "2026-01-10", "item": "Jan", "category": "其他", "type": "Expense", "amount": 800.0},
         {"date": "2026-09-30", "item": "Sep", "category": "其他", "type": "Expense", "amount": 9000.0},
@@ -55,6 +56,22 @@ def test_current_month_excluded_from_ytd_monthly_average_even_on_last_day(monkey
         subject_mode="all", aggregation_mode="specific", aggregation="average_month",
         flow_mode="specific", flow="expense", time_mode="specific",
         date_from="2026-01-01", date_to="2026-09-30",
+    )
+    result = ai_release.execute_finance_plan(plan, frame)
+    assert result["authoritative_total"] == 100.0
+
+
+def test_first_partial_history_year_average_does_not_count_pretracking_zero_months(monkeypatch):
+    monkeypatch.setattr(ai_release, "today_my", lambda: date(2026, 9, 2))
+    monkeypatch.setattr(product_logic, "today_my", lambda: date(2026, 9, 2))
+    frame = _frame([
+        {"date": f"2023-{month:02d}-15", "item": "Tracked", "category": "其他", "type": "Expense", "amount": 100.0}
+        for month in range(5, 13)
+    ])
+    plan = FinanceQueryPlan(
+        subject_mode="all", aggregation_mode="specific", aggregation="average_month",
+        flow_mode="specific", flow="expense", time_mode="specific",
+        date_from="2023-01-01", date_to="2023-12-31",
     )
     result = ai_release.execute_finance_plan(plan, frame)
     assert result["authoritative_total"] == 100.0
