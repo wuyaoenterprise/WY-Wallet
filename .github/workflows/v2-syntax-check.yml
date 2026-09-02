@@ -3,6 +3,8 @@ name: V3 release-gate validation
 on:
   pull_request:
     paths:
+      - "app.py"
+      - "requirements.txt"
       - "v3/**"
       - ".streamlit/config.toml"
       - ".github/workflows/v2-syntax-check.yml"
@@ -11,6 +13,8 @@ on:
       - "agent/wy-wallet-v3"
       - "agent/wy-wallet-v3-finalize"
     paths:
+      - "app.py"
+      - "requirements.txt"
       - "v3/**"
       - ".streamlit/config.toml"
       - ".github/workflows/v2-syntax-check.yml"
@@ -32,22 +36,25 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
-          cache-dependency-path: v3/requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            v3/requirements.txt
 
       - name: Install V3 dependencies
         run: |
+          cmp -s requirements.txt v3/requirements.txt
           python -m pip install -r v3/requirements.txt
           python -m pip install pytest
           python -m pip check
 
-      - name: Compile V3 application
-        run: python -m compileall -q v3
+      - name: Compile V3 application and retired root guard
+        run: python -m compileall -q app.py v3
 
       - name: Reject obsolete or V2-coupled runtime patterns
         shell: bash
         run: |
           set -euo pipefail
-          runtime_files=$(find v3 -type f -name '*.py' ! -path 'v3/tests/*')
+          runtime_files="app.py $(find v3 -type f -name '*.py' ! -path 'v3/tests/*')"
           reject() {
             local pattern="$1"
             if grep -nE "$pattern" $runtime_files; then
@@ -56,6 +63,7 @@ jobs:
             fi
           }
           reject 'google\.generativeai'
+          reject 'Smart Asset Pro'
           reject 'exec\(compile'
           reject 'source\.replace'
           reject 'use_container_width'
@@ -65,9 +73,11 @@ jobs:
           reject 'SHARED_WEB_CORE'
           reject 'ROOT / "v2"'
           reject 'runpy\.run_path'
+          grep -q 'ROOT_ENTRYPOINT_RETIRED = True' app.py
+          grep -q 'V3_ENTRYPOINT = "v3/app.py"' app.py
           grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v3/wywallet/config.py
           grep -q 'APP_TITLE = "WY Wallet V3"' v3/wywallet/config.py
-          grep -q 'APP_VERSION = "v3.2.4"' v3/wywallet/config.py
+          grep -q 'APP_VERSION = "v3.2.5"' v3/wywallet/config.py
           grep -q 'showSidebarNavigation = false' .streamlit/config.toml
 
       - name: Run V3 release regressions
