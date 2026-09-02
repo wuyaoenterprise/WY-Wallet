@@ -15,11 +15,13 @@ import streamlit as st
 import wywallet.db as db
 import wywallet.snapshot as snapshot_mod
 import wywallet.web as web
+import wywallet.ai_page as ai_page
+import wywallet.transactions_page as transactions_page
 
 transactions = pd.DataFrame([
-    {"id": 1, "date": "2026-08-10", "item": "Petrol", "category": "交通", "type": "Expense", "amount": 75.0, "note": "", "receipt_id": ""},
-    {"id": 2, "date": "2026-08-20", "item": "Salary", "category": "收入", "type": "Income", "amount": 3000.0, "note": "", "receipt_id": ""},
-    {"id": 3, "date": "2026-08-25", "item": "Petrol refund", "category": "交通", "type": "Refund", "amount": 10.0, "note": "", "receipt_id": ""},
+    {"id": 1, "date": "2026-08-10", "item": "Petrol", "category": "交通", "type": "Expense", "amount": 75.0, "note": "", "receipt_id": "", "updated_at": "2026-08-10T00:00:00+00:00", "flow_subtype": ""},
+    {"id": 2, "date": "2026-08-20", "item": "Salary", "category": "收入", "type": "Income", "amount": 3000.0, "note": "", "receipt_id": "", "updated_at": "2026-08-20T00:00:00+00:00", "flow_subtype": ""},
+    {"id": 3, "date": "2026-08-25", "item": "Petrol refund", "category": "交通", "type": "Refund", "amount": 10.0, "note": "", "receipt_id": "", "updated_at": "2026-08-25T00:00:00+00:00", "flow_subtype": "customer_refund"},
 ])
 transactions["date"] = pd.to_datetime(transactions["date"])
 invalid = pd.DataFrame(columns=["id", "date", "item", "category", "type", "amount", "note", "issues"])
@@ -43,11 +45,10 @@ if __TRUNCATED__:
     web._dashboard = forbidden_dashboard
 else:
     web._dashboard = lambda frame: st.write("DASHBOARD_OK")
-web._transactions_page = lambda frame, categories: st.write("TRANSACTIONS_OK")
+transactions_page.render = lambda frame, categories: st.write("TRANSACTIONS_OK")
+ai_page.render = lambda frame: st.write("AI_OK")
 web._reports_page = lambda frame, invalid_rows: st.write("REPORTS_OK")
-web._ai_page = lambda frame: st.write("AI_OK")
 web._settings_page = lambda frame, invalid_rows, categories: st.write("SETTINGS_OK")
-web.add_transaction_dialog = lambda categories: None
 st.page_link = lambda *args, **kwargs: None
 
 ROUTE = __ROUTE__
@@ -102,6 +103,14 @@ def test_actual_v3_entrypoint_routes_to_fragment_page():
     at.run()
     assert not at.exception
     assert any("TRANSACTIONS_OK" in text for text in _texts(at))
+
+
+def test_actual_v3_entrypoint_routes_to_hardened_ai_page():
+    at = AppTest.from_string(_script("AI 洞察"), default_timeout=25)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+    assert any("AI_OK" in text for text in _texts(at))
 
 
 def test_missing_access_configuration_fails_closed_before_database_read():
