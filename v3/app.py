@@ -32,6 +32,7 @@ def main() -> None:
         invalid_rows = snap["invalid"]
         categories = snap["categories"]
         truncated = bool(snap["truncated"])
+        total_count = int(snap.get("total_count") or len(transactions))
     except Exception as exc:
         loading.empty()
         page_header("无法连接财务数据库", "网站已经正常启动，但 Supabase 数据读取失败。")
@@ -79,7 +80,7 @@ def main() -> None:
     if navigation == "总览":
         dashboard_page.render(transactions)
     elif navigation == "交易记录":
-        transactions_page.render(transactions, categories)
+        transactions_page.render(transactions, categories, truncated=truncated, total_count=total_count)
     elif navigation == "分析报表":
         reports_page.render(transactions, invalid_rows)
     elif navigation == "AI 洞察":
