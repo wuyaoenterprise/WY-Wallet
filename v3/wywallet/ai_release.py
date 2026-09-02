@@ -7,6 +7,7 @@ import pandas as pd
 
 from . import ai as base
 from .config import today_my
+from .product_logic import tracking_start_date
 
 
 def _local_subject_matches(subject: str, frame: pd.DataFrame) -> tuple[list[str], list[str]]:
@@ -49,9 +50,15 @@ def _completed_month_average(plan: base.FinanceQueryPlan, transactions: pd.DataF
     effective_end = min(end, today)
     if end >= current_month_start and start <= completed_end:
         effective_end = min(effective_end, completed_end)
-    ranged = base._filter_range(base_frame, start, effective_end) if start <= effective_end else base_frame.iloc[0:0].copy()
+
+    first = tracking_start_date(transactions)
+    effective_start = max(start, first) if first is not None else start
+    if effective_start > effective_end:
+        return 0.0
+
+    ranged = base._filter_range(base_frame, effective_start, effective_end)
     total = base._amount_total(ranged, flow)
-    months = (effective_end.year - start.year) * 12 + effective_end.month - start.month + 1
+    months = (effective_end.year - effective_start.year) * 12 + effective_end.month - effective_start.month + 1
     return round(total / max(months, 1), 2)
 
 
