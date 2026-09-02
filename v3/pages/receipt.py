@@ -330,6 +330,12 @@ else:
     edited = pd.DataFrame(add_line_ids(edited.to_dict("records"), root_id))
     _store_draft(image_signature, edited)
 
+# Whole-receipt duplicate confirmation is authoritative. Once the user explicitly
+# confirms re-importing the same receipt, requiring a second confirmation on every
+# individual line is redundant and makes legitimate full re-imports impractical.
+if already_saved and force_whole_receipt and not edited.empty:
+    edited["仍然保存重复"] = edited["保存"].fillna(False).astype(bool)
+
 existing = _duplicate_keys(transactions)
 statuses, candidates = evaluate_receipt_candidates(edited, existing)
 summary = edited.copy()
