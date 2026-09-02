@@ -11,9 +11,9 @@ if str(V3_ROOT) not in sys.path:
     sys.path.insert(0, str(V3_ROOT))
 
 import wywallet.web as web
-from wywallet import ai_page, settings_page, transactions_page
+from wywallet import ai_page, dashboard_page, settings_page, transactions_page
 from wywallet.access import render_lock_button, require_access, touch_access
-from wywallet.config import APP_TITLE, APP_VERSION, BUILD_ID, TIMEZONE_NAME
+from wywallet.config import APP_TITLE, APP_VERSION, TIMEZONE_NAME
 from wywallet.db import refresh_data
 from wywallet.snapshot import clear_snapshot_cache, current_snapshot
 from wywallet.transaction_commands import add_transaction_dialog
@@ -93,7 +93,7 @@ def main() -> None:
             st.rerun()
         render_lock_button()
         st.caption(f"数据读取：{snap['loaded_at'] or '未知'}")
-        st.caption(f"{APP_VERSION} · {BUILD_ID}")
+        st.caption(APP_VERSION)
         st.caption(f"Malaysia time · {TIMEZONE_NAME}")
         st.caption("🔒 密码保护已启用" if access_mode == "password" else "🔒 由平台私有访问保护")
 
@@ -103,7 +103,7 @@ def main() -> None:
         return
 
     if navigation == "总览":
-        web._dashboard(transactions)
+        dashboard_page.render(transactions)
     elif navigation == "交易记录":
         _transactions_fragment(transactions, categories)
     elif navigation == "分析报表":
