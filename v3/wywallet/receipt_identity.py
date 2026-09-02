@@ -99,14 +99,15 @@ def receipt_presence(
     current_line_ids: Iterable[object],
     existing_receipt_ids: Iterable[object],
 ) -> dict[str, Any]:
-    """Describe whether a receipt is absent, partial, complete or ambiguous.
+    """Describe whether a receipt is absent, partial or blocking-complete.
 
     Older root-only / numeric-line IDs are treated conservatively as complete,
     because their historical format cannot prove which semantic lines are
     missing. New fingerprint line IDs support safe completion of a partial save.
-    If the same root exists but no semantic line can be matched, the state is
-    ambiguous and must remain blocked by default rather than being treated as a
-    brand-new receipt after OCR drift.
+    If the same root exists but no semantic line can be matched, OCR drift makes
+    the state ambiguous; it is conservatively exposed as ``complete=True`` so the
+    page keeps the whole receipt blocked unless the user explicitly confirms a
+    duplicate import.
     """
     root = receipt_root(root_id)
     current = {
@@ -121,9 +122,10 @@ def receipt_presence(
     }
     legacy_complete = root in existing or any(_OLD_LINE_SUFFIX.match(value) for value in existing)
     matched = current & existing
-    complete = bool(root) and (legacy_complete or (bool(current) and current.issubset(existing)))
+    exact_complete = bool(root) and (legacy_complete or (bool(current) and current.issubset(existing)))
+    ambiguous = bool(root) and bool(existing) and not exact_complete and not matched
+    complete = exact_complete or ambiguous
     partial = bool(root) and bool(existing) and not complete and bool(matched)
-    ambiguous = bool(root) and bool(existing) and not complete and not matched
     return {
         "root": root,
         "complete": complete,
