@@ -120,10 +120,16 @@ def materialize_receipt_adjustments(
 def _is_duplicate(key: tuple, exact_keys: set[DuplicateKey], seen: set[tuple]) -> bool:
     normalized = _ensure_key(key)
     normalized_seen = {_ensure_key(value) for value in seen}
-    if normalized in exact_keys or normalized in normalized_seen:
+    combined = exact_keys | normalized_seen
+    if normalized in combined:
+        return True
+    # A structured receipt line ID is authoritative provenance. If that line ID
+    # already exists, treat it as the same line even if a later OCR pass changes
+    # the text or amount slightly.
+    if normalized[4] and any(existing[4] == normalized[4] for existing in combined):
         return True
     base = normalized[:4]
-    return any(existing[:4] == base and not existing[4] for existing in exact_keys | normalized_seen)
+    return any(existing[:4] == base and not existing[4] for existing in combined)
 
 
 def evaluate_receipt_candidates(edited: pd.DataFrame, existing_keys: set[tuple]) -> tuple[list[str], list[ReceiptCandidate]]:
