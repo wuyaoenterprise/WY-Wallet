@@ -18,13 +18,16 @@ def test_transactions_page_uses_database_optimistic_concurrency():
     assert "physical_payload" in source
 
 
-def test_transactions_page_has_safe_paging_refresh_and_equal_metrics():
+def test_transactions_page_has_safe_paging_refresh_equal_metrics_and_truncation_notice():
     source = _source("v3/wywallet/transactions_page.py")
     assert 'page_slice("分页", "oc_table_page"' in source
     assert 'page_slice("卡片分页", "oc_card_page"' in source
     assert "clear_snapshot_cache()" in source
     assert "a, b, c, d, e = st.columns(5" in source
     assert "ranked_categories" in source
+    assert "truncated: bool = False" in source
+    assert "搜索、筛选和分页仅针对这部分数据" in source
+    assert "st.dataframe(display" in source
 
 
 def test_manual_entry_warns_on_exact_duplicates_without_blocking():
@@ -33,6 +36,17 @@ def test_manual_entry_warns_on_exact_duplicates_without_blocking():
     assert "完全相同的交易" in source
     assert "仍可保存" in source
     assert "physical_payload" in source
+    assert "min_value=0.01" in source
+    assert "max_chars=180" in source
+    assert "max_chars=1000" in source
+
+
+def test_undo_uses_idempotent_restore_instead_of_ambiguous_duplicate_block():
+    source = _source("v3/wywallet/transactions_page.py")
+    assert '"undo_token": str(uuid.uuid4())' in source
+    assert '"p_client_token": token' in source
+    assert "wy_wallet_insert_transaction" in source
+    assert "数据库已经存在同等交易，因此没有重复恢复" not in source
 
 
 def test_settings_page_uses_atomic_merge_mvcc_backup_and_hardened_repair():
@@ -47,9 +61,11 @@ def test_settings_page_uses_atomic_merge_mvcc_backup_and_hardened_repair():
     assert "disabled=disabled" in source
     assert '"build_id"' not in source
     assert "structured_type = logical_type(raw_type" in source
+    assert "decode_legacy_note" in source
+    assert "legacy_refund" in source
 
 
-def test_receipt_page_preserves_editor_state_and_structured_metadata():
+def test_receipt_page_recomputes_identity_after_human_edits_and_scopes_confirmations():
     source = _source("v3/pages/receipt.py")
     assert "receipt_draft_" in source
     assert "_store_draft" in source
@@ -63,7 +79,11 @@ def test_receipt_page_preserves_editor_state_and_structured_metadata():
     assert "a, b, c, d, e = st.columns(5" in source
     assert "BUILD_ID" not in source
     assert "st.caption(APP_VERSION)" in source
-    assert "Whole-receipt duplicate confirmation is authoritative" in source
+    assert "identity_rows = edited.to_dict" in source
+    assert "root_id = receipt_root_id(payload, identity_rows)" in source
+    assert 'key=f"force_whole_receipt_{image_signature}"' in source
+    assert 'key=f"receipt_difference_confirm_{image_signature}"' in source
+    assert 'key=f"receipt_final_confirm_{image_signature}"' in source
     assert 'edited["仍然保存重复"] = edited["保存"]' in source
 
 
@@ -76,6 +96,7 @@ def test_main_app_routes_to_dedicated_hardened_pages():
     assert "reports_page.render" in source
     assert "web._dashboard" not in source
     assert "web._reports_page" not in source
+    assert "total_count=total_count" in source
 
 
 def test_reports_page_avoids_misleading_partial_visuals():
@@ -86,6 +107,10 @@ def test_reports_page_avoids_misleading_partial_visuals():
     assert "不绘制虚假的 0 元同比曲线" in source
     assert "m1, m2, m3, m4, m5 = st.columns(5" in source
     assert "a, b, c, d, e = st.columns(5" in source
+    assert "historical_monthly_average" in source
+    assert "recurring_items_by_category" in source
+    assert "invalid_quality_for_year" in source
+    assert "无效日期无法归年" in source
 
 
 def test_new_transaction_uses_revision_guarded_fast_snapshot_patch():
@@ -118,6 +143,7 @@ def test_dashboard_month_window_is_calendar_anchored_and_equal_width():
     assert "groupby([\"year\", \"month\"]" in source
     assert "m1, m2, m3, m4, m5 = st.columns(5" in source
     assert "category_orders" in source
+    assert "st.dataframe(display" in source
 
 
 def test_metric_cards_and_muted_text_are_theme_aware():
@@ -138,7 +164,7 @@ def test_displayed_version_is_compact_semver_only():
     config = _source("v3/wywallet/config.py")
     app = _source("v3/app.py")
     receipt = _source("v3/pages/receipt.py")
-    assert 'APP_VERSION = "v3.2.3"' in config
+    assert 'APP_VERSION = "v3.2.4"' in config
     assert "BUILD_ID" not in app
     assert "st.caption(APP_VERSION)" in app
     assert "BUILD_ID" not in receipt
