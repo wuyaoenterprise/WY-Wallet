@@ -9,8 +9,7 @@ V3_ROOT = Path(__file__).resolve().parent
 if str(V3_ROOT) not in sys.path:
     sys.path.insert(0, str(V3_ROOT))
 
-import wywallet.web as web
-from wywallet import ai_page, dashboard_page, settings_page, transactions_page
+from wywallet import ai_page, dashboard_page, reports_page, settings_page, transactions_page
 from wywallet.access import render_lock_button, require_access
 from wywallet.config import APP_TITLE, APP_VERSION, TIMEZONE_NAME
 from wywallet.db import refresh_data
@@ -47,7 +46,7 @@ def main() -> None:
     with st.sidebar:
         st.markdown('<div class="wy-brand"><div class="wy-brand-title">💳 WY Wallet</div><div class="wy-brand-subtitle">个人财务中心 · V3</div></div>', unsafe_allow_html=True)
         if st.button("＋ 新增交易", type="primary", width="stretch"):
-            add_transaction_dialog(categories)
+            add_transaction_dialog(categories, transactions)
         st.page_link("pages/receipt.py", label="📷 AI 收据识别", width="stretch")
         navigation = st.radio(
             "导航",
@@ -77,16 +76,12 @@ def main() -> None:
         st.error("交易已超过 100,000 笔。请先到「设置与备份」制作完整备份并归档，或升级数据库查询方案后再继续统计。")
         return
 
-    # Navigation already reruns this entrypoint. Passing the single loaded
-    # snapshot directly avoids nested-fragment rerun chains and a second data
-    # lookup, preserving the live latency hotfix while using the hardened V3
-    # page modules.
     if navigation == "总览":
         dashboard_page.render(transactions)
     elif navigation == "交易记录":
         transactions_page.render(transactions, categories)
     elif navigation == "分析报表":
-        web._reports_page(transactions, invalid_rows)
+        reports_page.render(transactions, invalid_rows)
     elif navigation == "AI 洞察":
         ai_page.render(transactions)
     else:
