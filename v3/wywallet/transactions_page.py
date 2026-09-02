@@ -9,7 +9,7 @@ import streamlit as st
 from . import analytics, db
 from .access import touch_access
 from .config import ADD_CATEGORY_OPTION, EXPENSE, INCOME, REFUND, TRANSACTION_TYPES, TYPE_LABELS, today_my
-from .ledger_codec import physical_payload
+from .ledger_codec import detach_receipt_if_identity_changed, physical_payload, receipt_identity_changed
 from .snapshot import clear_snapshot_cache
 from .transaction_commands import add_transaction_dialog
 from .ui import money, page_header
@@ -43,6 +43,16 @@ def _edit_dialog(row: dict, categories: list[str], transactions: pd.DataFrame) -
     amount = st.number_input("金额 (RM)", min_value=0.01, step=0.01, value=float(row["amount"]), key=f"oc_edit_amount_{tx_id}")
     note = st.text_area("备注", value=str(row.get("note") or ""), max_chars=1000, key=f"oc_edit_note_{tx_id}")
 
+    receipt_linked = bool(str(row.get("receipt_id") or "").strip())
+    identity_changed = receipt_linked and receipt_identity_changed(
+        row,
+        {"date": tx_date, "item": item, "type": tx_type or EXPENSE, "amount": amount},
+    )
+    if identity_changed:
+        st.warning("这笔交易来自收据；你修改了日期、项目、类型或金额。保存后会解除原 Receipt ID，避免账本内容继续挂在错误的收据身份上。")
+    elif receipt_linked:
+        st.caption("这笔交易来自收据。只修改类别或备注会保留原 Receipt ID。")
+
     if not st.button("保存修改", type="primary", width="stretch", key=f"oc_edit_submit_{tx_id}"):
         return
     category = new_category.strip() if selected == ADD_CATEGORY_OPTION else selected
@@ -52,7 +62,10 @@ def _edit_dialog(row: dict, categories: list[str], transactions: pd.DataFrame) -
             "type": tx_type or EXPENSE, "amount": amount, "note": note,
             "receipt_id": str(row.get("receipt_id") or ""),
         })
-        payload = physical_payload(logical, str(row.get("flow_subtype") or ""))
+        logical, subtype, detached = detach_receipt_if_identity_changed(
+            row, logical, str(row.get("flow_subtype") or "")
+        )
+        payload = physical_payload(logical, subtype)
         db.get_client().rpc("wy_wallet_update_transaction", {
             "p_id": tx_id,
             "p_expected_updated_at": expected_updated_at,
@@ -71,7 +84,7 @@ def _edit_dialog(row: dict, categories: list[str], transactions: pd.DataFrame) -
             except Exception:
                 st.warning("交易已更新，但类别登记失败；它仍会作为历史类别显示。")
         db.invalidate_data()
-        st.toast("交易已更新")
+        st.toast("交易已更新；原收据关联已解除" if detached else "交易已更新")
         st.rerun()
     except Exception as exc:
         text = str(exc)
