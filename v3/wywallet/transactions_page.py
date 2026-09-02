@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import html
-import uuid
 
 import pandas as pd
 import streamlit as st
 
 from . import analytics, db
 from .access import touch_access
-from .config import ADD_CATEGORY_OPTION, EXPENSE, INCOME, REFUND, REFUND_DB_MARKER, TRANSACTION_TYPES, TYPE_LABELS, today_my
+from .config import ADD_CATEGORY_OPTION, EXPENSE, INCOME, REFUND, TRANSACTION_TYPES, TYPE_LABELS, today_my
+from .ledger_codec import physical_payload
 from .snapshot import clear_snapshot_cache, fresh_snapshot
 from .transaction_commands import add_transaction_dialog
 from .ui import money, page_header
+from .ux import page_slice, ranked_categories
 
 
 def _signed_money(tx_type: str, amount: float) -> str:
@@ -19,22 +20,8 @@ def _signed_money(tx_type: str, amount: float) -> str:
     return sign + money(amount)
 
 
-def _physical_fields(logical: dict, existing_subtype: str = "") -> tuple[str, str, str | None]:
-    tx_type = logical["type"]
-    note = str(logical.get("note") or "").strip()
-    subtype = str(existing_subtype or "").strip() or None
-    if tx_type == REFUND:
-        tx_type = INCOME
-        note = f"{REFUND_DB_MARKER} {note}".rstrip()
-        if subtype not in {"receipt_discount", "customer_refund"}:
-            subtype = "customer_refund"
-    elif subtype not in {"receipt_tax", "receipt_service_charge"}:
-        subtype = None
-    return tx_type, note, subtype
-
-
 @st.dialog("编辑交易", width="large")
-def _edit_dialog(row: dict, categories: list[str]) -> None:
+def _edit_dialog(row: dict, categories: list[str], transactions: pd.DataFrame) -> None:
     touch_access()
     tx_id = int(row["id"])
     expected_updated_at = str(row.get("updated_at") or "")
@@ -45,7 +32,7 @@ def _edit_dialog(row: dict, categories: list[str]) -> None:
     c1, c2 = st.columns(2)
     tx_date = c1.date_input("日期", value=pd.to_datetime(row["date"]).date(), max_value=today_my(), key=f"oc_edit_date_{tx_id}")
     tx_type = c2.segmented_control("类型", TRANSACTION_TYPES, default=row["type"], format_func=lambda value: TYPE_LABELS[value], key=f"oc_edit_type_{tx_id}")
-    options = list(categories)
+    options = ranked_categories(categories, transactions)
     if row["category"] not in options:
         options.insert(0, row["category"])
     options.append(ADD_CATEGORY_OPTION)
@@ -64,18 +51,18 @@ def _edit_dialog(row: dict, categories: list[str]) -> None:
             "type": tx_type or EXPENSE, "amount": amount, "note": note,
             "receipt_id": str(row.get("receipt_id") or ""),
         })
-        physical_type, physical_note, subtype = _physical_fields(logical, str(row.get("flow_subtype") or ""))
+        payload = physical_payload(logical, str(row.get("flow_subtype") or ""))
         db.get_client().rpc("wy_wallet_update_transaction", {
             "p_id": tx_id,
             "p_expected_updated_at": expected_updated_at,
-            "p_date": logical["date"],
-            "p_item": logical["item"],
-            "p_category": logical["category"],
-            "p_type": physical_type,
-            "p_amount": logical["amount"],
-            "p_note": physical_note,
-            "p_receipt_id": str(row.get("receipt_id") or "") or None,
-            "p_flow_subtype": subtype,
+            "p_date": payload["date"],
+            "p_item": payload["item"],
+            "p_category": payload["category"],
+            "p_type": payload["type"],
+            "p_amount": payload["amount"],
+            "p_note": payload["note"],
+            "p_receipt_id": payload.get("receipt_id"),
+            "p_flow_subtype": payload.get("flow_subtype"),
         }).execute()
         if selected == ADD_CATEGORY_OPTION:
             try:
@@ -145,7 +132,10 @@ def _restore_recent() -> None:
                 return
         except ValueError:
             continue
-    db.insert_transactions([snapshot])
+    logical = db.normalize_transaction(snapshot)
+    payload = physical_payload(logical, str(snapshot.get("flow_subtype") or ""))
+    db.get_client().table("transactions").insert(payload).execute()
+    db.invalidate_data()
     st.session_state.pop("recently_deleted", None)
     st.toast("已恢复最近删除")
     st.rerun()
@@ -160,7 +150,7 @@ def _filters(transactions: pd.DataFrame, categories: list[str]) -> pd.DataFrame:
         month = m.selectbox("月份", ["全部"] + list(range(1, 13)), key="oc_month")
         t, c, so = st.columns([1, 1.5, 1.5])
         tx_type = t.selectbox("类型", ["全部"] + TRANSACTION_TYPES, format_func=lambda value: "全部" if value == "全部" else TYPE_LABELS[value], key="oc_type")
-        category = c.selectbox("类别", ["全部"] + categories, key="oc_category")
+        category = c.selectbox("类别", ["全部"] + ranked_categories(categories, transactions), key="oc_category")
         sort = so.selectbox("排序", ["日期：最新优先", "日期：最早优先", "金额：由高到低", "金额：由低到高"], key="oc_sort")
 
     filtered = transactions.copy()
@@ -182,15 +172,12 @@ def _filters(transactions: pd.DataFrame, categories: list[str]) -> pd.DataFrame:
     return filtered.sort_values([column, "id"], ascending=[ascending, ascending]).reset_index(drop=True)
 
 
-def _render_table(filtered: pd.DataFrame, categories: list[str]) -> None:
+def _render_table(filtered: pd.DataFrame, categories: list[str], transactions: pd.DataFrame) -> None:
     if filtered.empty:
         st.info("没有符合条件的交易。")
         return
-    page_size = 40
-    page_count = max(1, (len(filtered) + page_size - 1) // page_size)
-    page_no = int(st.selectbox("分页", range(1, page_count + 1), format_func=lambda value: f"第 {value}/{page_count} 页", key="oc_table_page")) if page_count > 1 else 1
-    start = (page_no - 1) * page_size
-    page = filtered.iloc[start:start + page_size].copy()
+    _, start, end = page_slice("分页", "oc_table_page", len(filtered), 40)
+    page = filtered.iloc[start:end].copy()
     display = pd.DataFrame({
         "日期": page["date"].dt.strftime("%Y-%m-%d"), "项目": page["item"], "类别": page["category"],
         "类型": page["type"].map(TYPE_LABELS), "金额": page.apply(lambda row: _signed_money(row["type"], row["amount"]), axis=1), "备注": page["note"],
@@ -201,20 +188,17 @@ def _render_table(filtered: pd.DataFrame, categories: list[str]) -> None:
     if selected is not None:
         e, d, _ = st.columns([1, 1, 4])
         if e.button("编辑交易", type="primary", width="stretch", key="oc_edit_button"):
-            _edit_dialog(row_map[int(selected)], categories)
+            _edit_dialog(row_map[int(selected)], categories, transactions)
         if d.button("删除交易", width="stretch", key="oc_delete_button"):
             _delete_dialog(row_map[int(selected)])
 
 
-def _render_cards(filtered: pd.DataFrame, categories: list[str]) -> None:
+def _render_cards(filtered: pd.DataFrame, categories: list[str], transactions: pd.DataFrame) -> None:
     if filtered.empty:
         st.info("没有符合条件的交易。")
         return
-    page_size = 30
-    page_count = max(1, (len(filtered) + page_size - 1) // page_size)
-    page_no = int(st.selectbox("卡片分页", range(1, page_count + 1), format_func=lambda value: f"第 {value}/{page_count} 页", key="oc_card_page")) if page_count > 1 else 1
-    start = (page_no - 1) * page_size
-    page = filtered.iloc[start:start + page_size]
+    _, start, end = page_slice("卡片分页", "oc_card_page", len(filtered), 30)
+    page = filtered.iloc[start:end]
     for _, series in page.iterrows():
         row = series.to_dict()
         with st.container(border=True):
@@ -226,7 +210,7 @@ def _render_cards(filtered: pd.DataFrame, categories: list[str]) -> None:
             right.markdown(f"### {_signed_money(row['type'], row['amount'])}")
             e, d, _ = st.columns([1, 1, 3])
             if e.button("编辑", key=f"oc_card_edit_{int(row['id'])}", width="stretch"):
-                _edit_dialog(row, categories)
+                _edit_dialog(row, categories, transactions)
             if d.button("删除", key=f"oc_card_delete_{int(row['id'])}", width="stretch"):
                 _delete_dialog(row)
 
@@ -236,7 +220,7 @@ def render(transactions: pd.DataFrame, categories: list[str]) -> None:
     page_header("交易记录", "跨设备编辑使用数据库版本检查；若记录已被其他设备修改，本次操作不会覆盖它。")
     add, receipt, undo, refresh, _ = st.columns([1, 1.2, 1.25, 1, 2.8])
     if add.button("＋ 新增交易", type="primary", width="stretch", key="oc_add"):
-        add_transaction_dialog(categories)
+        add_transaction_dialog(categories, transactions)
     with receipt:
         st.page_link("pages/receipt.py", label="📷 AI 收据识别", width="stretch")
     if st.session_state.get("recently_deleted") and undo.button("↩ 撤销删除", width="stretch", key="oc_undo"):
@@ -260,6 +244,6 @@ def render(transactions: pd.DataFrame, categories: list[str]) -> None:
     e.metric("净额", money(balance))
     view = st.segmented_control("显示方式", ["表格", "卡片"], default="表格", key="oc_view")
     if view == "卡片":
-        _render_cards(filtered, categories)
+        _render_cards(filtered, categories, transactions)
     else:
-        _render_table(filtered, categories)
+        _render_table(filtered, categories, transactions)
