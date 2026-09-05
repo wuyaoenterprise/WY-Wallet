@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+from streamlit.testing.v1 import AppTest
+
+ROOT = Path(__file__).resolve().parents[2]
+APP = ROOT / "v3" / "app.py"
+
+FAKE_APP = r'''
+import runpy
+import pandas as pd
+import streamlit as st
+import wywallet.db as db
+import wywallet.snapshot as snapshot_mod
+import wywallet.ai_page as ai_page
+import wywallet.dashboard_page as dashboard_page
+import wywallet.reports_page as reports_page
+import wywallet.settings_page as settings_page
+import wywallet.transactions_page as transactions_page
+
+transactions = pd.DataFrame([
+    {"id": 1, "date": "2026-08-10", "item": "Petrol", "category": "交通", "type": "Expense", "amount": 75.0, "note": "", "receipt_id": "", "updated_at": "2026-08-10T00:00:00+00:00", "flow_subtype": ""},
+    {"id": 2, "date": "2026-08-20", "item": "Salary", "category": "收入", "type": "Income", "amount": 3000.0, "note": "", "receipt_id": "", "updated_at": "2026-08-20T00:00:00+00:00", "flow_subtype": ""},
+    {"id": 3, "date": "2026-08-25", "item": "Petrol refund", "category": "交通", "type": "Refund", "amount": 10.0, "note": "", "receipt_id": "", "updated_at": "2026-08-25T00:00:00+00:00", "flow_subtype": "customer_refund"},
+])
+transactions["date"] = pd.to_datetime(transactions["date"])
+invalid = pd.DataFrame(columns=["id", "date", "item", "category", "type", "amount", "note", "issues"])
+
+snapshot_mod.current_snapshot = lambda: {
+    "transactions": transactions.copy(),
+    "invalid": invalid.copy(),
+    "categories": ["交通", "收入"],
+    "truncated": __TRUNCATED__,
+    "total_count": 100001 if __TRUNCATED__ else 3,
+    "database_revision": 1,
+    "database_revision_updated_at": "2026-09-01T14:00:00+08:00",
+    "loaded_at": "2026-09-01T14:00:00+08:00",
+}
+snapshot_mod.clear_snapshot_cache = lambda: None
+db.refresh_data = lambda: None
+
+if __TRUNCATED__:
+    def forbidden_dashboard(frame):
+        raise RuntimeError("PARTIAL_DASHBOARD_RENDERED")
+    dashboard_page.render = forbidden_dashboard
+else:
+    dashboard_page.render = lambda frame: st.write("DASHBOARD_OK")
+transactions_page.render = lambda frame, categories, **kwargs: st.write("TRANSACTIONS_OK")
+ai_page.render = lambda frame: st.write("AI_OK")
+reports_page.render = lambda frame, invalid_rows: st.write("REPORTS_OK")
+settings_page.render = lambda frame, invalid_rows, categories: st.write("SETTINGS_OK")
+st.page_link = lambda *args, **kwargs: None
+
+ROUTE = __ROUTE__
+if ROUTE is not None:
+    original_radio = st.radio
+    def fixed_radio(label, options, **kwargs):
+        if label == "导航":
+            return ROUTE
+        return original_radio(label, options, **kwargs)
+    st.radio = fixed_radio
+
+runpy.run_path(r"__APP__", run_name="__main__")
+'''
+
+
+def _script(route=None, truncated=False):
+    return (
+        FAKE_APP
+        .replace("__APP__", str(APP).replace("\\", "\\\\"))
+        .replace("__ROUTE__", repr(route))
+        .replace("__TRUNCATED__", repr(bool(truncated)))
+    )
+
+
+def _texts(at: AppTest) -> list[str]:
+    return [str(element.value) for element in at.markdown]
+
+
+def _errors(at: AppTest) -> list[str]:
+    return [str(element.value) for element in at.error]
+
+
+def test_actual_v3_entrypoint_uses_snapshot_not_legacy_multi_page_loader():
+    source = APP.read_text(encoding="utf-8")
+    assert "current_snapshot()" in source
+    assert "load_transactions" not in source
+    assert "transactions_truncated" not in source
+    assert "data_loaded_at" not in source
+
+
+def test_actual_v3_entrypoint_renders_dashboard_with_fake_database():
+    at = AppTest.from_string(_script(), default_timeout=25)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+    assert any("DASHBOARD_OK" in text for text in _texts(at))
+
+
+def test_actual_v3_entrypoint_routes_to_transaction_page():
+    at = AppTest.from_string(_script("交易记录"), default_timeout=25)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+    assert any("TRANSACTIONS_OK" in text for text in _texts(at))
+
+
+def test_actual_v3_entrypoint_routes_to_hardened_ai_page():
+    at = AppTest.from_string(_script("AI 洞察"), default_timeout=25)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+    assert any("AI_OK" in text for text in _texts(at))
+
+
+def test_actual_v3_entrypoint_routes_to_hardened_reports_page():
+    at = AppTest.from_string(_script("分析报表"), default_timeout=25)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+    assert any("REPORTS_OK" in text for text in _texts(at))
+
+
+def test_missing_access_configuration_fails_closed_before_database_read():
+    at = AppTest.from_file(str(APP), default_timeout=20)
+    at.run()
+    assert not at.exception
+    assert any("安全设置未完成" in text for text in _texts(at))
+
+
+def test_password_gate_is_rendered_before_database_read():
+    at = AppTest.from_file(str(APP), default_timeout=20)
+    at.secrets["WEB_ACCESS_PASSWORD"] = "test-secret"
+    at.run()
+    assert not at.exception
+    assert any("WY Wallet 私人访问" in text for text in _texts(at))
+    assert any(element.label == "访问密码" for element in at.text_input)
+
+
+def test_database_failure_is_visible_instead_of_blank_screen():
+    script = _script().replace(
+        'snapshot_mod.current_snapshot = lambda: {',
+        'def fail_snapshot():\n    raise RuntimeError("SUPABASE_TEST_FAILURE")\nsnapshot_mod.current_snapshot = fail_snapshot\nDUMMY = {',
+        1,
+    )
+    at = AppTest.from_string(script, default_timeout=20)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+    assert any("无法连接财务数据库" in text for text in _texts(at))
+    assert any("SUPABASE_TEST_FAILURE" in text for text in _errors(at))
+
+
+def test_truncated_ledger_does_not_render_partial_dashboard_totals():
+    at = AppTest.from_string(_script(truncated=True), default_timeout=20)
+    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
+    at.run()
+    assert not at.exception
+
+
+def test_receipt_page_cannot_bypass_password_gate():
+    receipt_page = ROOT / "v3" / "pages" / "receipt.py"
+    at = AppTest.from_file(str(receipt_page), default_timeout=20)
+    at.secrets["WEB_ACCESS_PASSWORD"] = "test-secret"
+    at.run()
+    assert not at.exception
+    assert any("WY Wallet 私人访问" in text for text in _texts(at))
