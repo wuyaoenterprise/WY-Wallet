@@ -64,7 +64,6 @@ def _prepare_frame(rows: list[dict], categories: list[str], fallback_category: s
     safe_dates = parsed_dates.copy()
     safe_dates.loc[needs_confirmation] = pd.Timestamp(today_my())
     frame["_date_future"] = future
-    frame["_date_missing"] = needs_confirmation
     frame["date"] = safe_dates
 
     category_map = {str(category).casefold(): str(category) for category in categories}
@@ -83,8 +82,7 @@ def _initial_draft(frame: pd.DataFrame, signature: str) -> pd.DataFrame:
     key = _draft_key(signature)
     if key not in st.session_state:
         st.session_state[key] = frame[_DRAFT_COLUMNS].to_dict("records")
-    records = st.session_state.get(key) or []
-    draft = pd.DataFrame(records)
+    draft = pd.DataFrame(st.session_state.get(key) or [])
     for column in _DRAFT_COLUMNS:
         if column not in draft:
             draft[column] = None
@@ -99,27 +97,11 @@ def _store_draft(signature: str, frame: pd.DataFrame) -> None:
     st.session_state[_draft_key(signature)] = work[_DRAFT_COLUMNS].to_dict("records")
 
 
-def _clear_target_editor_state(signature: str, mode: str) -> None:
-    if mode == "表格":
-        st.session_state.pop(f"receipt_editor_release_{signature}", None)
-        return
-    prefixes = [
-        "receipt_keep_", "receipt_date_ok_", "receipt_force_", "receipt_date_",
-        "receipt_type_", "receipt_item_", "receipt_category_", "receipt_amount_", "receipt_note_",
-    ]
-    for key in list(st.session_state):
-        if any(str(key).startswith(prefix) for prefix in prefixes) and f"_{signature}_" in str(key):
-            st.session_state.pop(key, None)
-
-
 def _clear_receipt_session_state(signature: str) -> None:
-    """Clear all draft/editor/confirmation state tied to one receipt image."""
     if not signature:
         return
-    _clear_target_editor_state(signature, "表格")
-    _clear_target_editor_state(signature, "卡片")
+    st.session_state.pop(f"receipt_editor_release_{signature}", None)
     st.session_state.pop(_draft_key(signature), None)
-    st.session_state.pop(f"receipt_last_mode_{signature}", None)
     for prefix in [
         "force_whole_receipt_",
         "receipt_difference_confirm_",
@@ -127,58 +109,6 @@ def _clear_receipt_session_state(signature: str) -> None:
         "receipt_save_",
     ]:
         st.session_state.pop(f"{prefix}{signature}", None)
-
-
-def _card_editor(frame: pd.DataFrame, categories: list[str], signature: str) -> pd.DataFrame:
-    edited_rows: list[dict] = []
-    for index, row in frame.reset_index(drop=True).iterrows():
-        with st.container(border=True):
-            st.markdown(f"**{index + 1}. {str(row.get('item') or f'项目 {index + 1}')}**")
-            a, b, c = st.columns(3)
-            keep = a.checkbox("保存", value=bool(row.get("保存", True)), key=f"receipt_keep_{signature}_{index}")
-            date_ok = b.checkbox("日期已确认", value=bool(row.get("日期已确认", False)), key=f"receipt_date_ok_{signature}_{index}")
-            force = c.checkbox("仍然保存重复", value=bool(row.get("仍然保存重复", False)), key=f"receipt_force_{signature}_{index}")
-            d1, d2 = st.columns(2)
-            tx_date = d1.date_input(
-                "日期",
-                value=pd.to_datetime(row["date"]).date(),
-                max_value=today_my(),
-                key=f"receipt_date_{signature}_{index}",
-            )
-            tx_type = d2.selectbox(
-                "类型", [EXPENSE, REFUND], index=0 if row["type"] == EXPENSE else 1,
-                key=f"receipt_type_{signature}_{index}",
-            )
-            item = st.text_input("项目／商家", value=str(row.get("item") or ""), max_chars=180, key=f"receipt_item_{signature}_{index}")
-            e1, e2 = st.columns(2)
-            options = list(categories)
-            current_category = str(row.get("category") or "")
-            if current_category and current_category not in options:
-                options.insert(0, current_category)
-            category = e1.selectbox(
-                "类别", options, index=options.index(current_category) if current_category in options else 0,
-                key=f"receipt_category_{signature}_{index}",
-            )
-            amount = e2.number_input(
-                "金额 (RM)", min_value=0.01, step=0.01,
-                value=float(row["amount"]) if not pd.isna(row["amount"]) else 0.01,
-                key=f"receipt_amount_{signature}_{index}",
-            )
-            note = st.text_area("备注", value=str(row.get("note") or ""), max_chars=1000, key=f"receipt_note_{signature}_{index}")
-            edited_rows.append({
-                "保存": keep,
-                "日期已确认": date_ok,
-                "仍然保存重复": force,
-                "date": tx_date,
-                "item": item,
-                "category": category,
-                "type": tx_type,
-                "amount": amount,
-                "note": note,
-                "receipt_id": str(row.get("receipt_id") or ""),
-                "flow_subtype": str(row.get("flow_subtype") or "").strip() or None,
-            })
-    return pd.DataFrame(edited_rows)
 
 
 def _duplicate_keys(frame: pd.DataFrame) -> set[tuple]:
@@ -230,6 +160,7 @@ source = (
 if source is None:
     st.info("选择图片或拍照后即可识别。")
     st.stop()
+
 raw = source.getvalue()
 if len(raw) > 10 * 1024 * 1024:
     st.error("图片超过 10 MB，请压缩或重新拍摄。")
@@ -278,14 +209,20 @@ tax = float(payload.get("tax") or 0)
 service_charge = float(payload.get("service_charge") or 0)
 discount = float(payload.get("discount") or 0)
 rows = materialize_receipt_adjustments(
-    base_rows, tax=tax, service_charge=service_charge, discount=discount,
-    fallback_category=fallback_category, receipt_id=None,
+    base_rows,
+    tax=tax,
+    service_charge=service_charge,
+    discount=discount,
+    fallback_category=fallback_category,
+    receipt_id=None,
 )
 if tax or service_charge or discount:
     st.info(f"附加项：税 {money(tax)} · 服务费 {money(service_charge)} · 折扣 {money(discount)}。折扣会抵减净支出。")
 if payload.get("merchant") or payload.get("receipt_number"):
     st.caption("收据：" + " · ".join(
-        value for value in [str(payload.get("merchant") or "").strip(), str(payload.get("receipt_number") or "").strip()] if value
+        value
+        for value in [str(payload.get("merchant") or "").strip(), str(payload.get("receipt_number") or "").strip()]
+        if value
     ))
 
 frame = _prepare_frame(rows, categories, fallback_category)
@@ -294,7 +231,7 @@ if bool(frame.get("_date_future", pd.Series(dtype=bool)).any()):
 draft = _initial_draft(frame, image_signature)
 
 st.subheader("检查并修改")
-st.caption("手机默认使用卡片编辑；日期看不清或识别成未来日期时会暂填今天，但必须人工确认。Receipt ID 会在人工修改完成后按最终内容生成。")
+st.caption("已恢复 V2 的紧凑表格方式：所有项目放在同一张表里统一核对和修改；日期看不清时会暂填今天，但必须人工确认。")
 new_cat_col, create_col = st.columns([2, 1])
 new_cat = new_cat_col.text_input("需要新类别时先建立", placeholder="例如：宠物", max_chars=80)
 if create_col.button("＋ 建立类别", width="stretch"):
@@ -305,42 +242,33 @@ if create_col.button("＋ 建立类别", width="stretch"):
     except Exception as exc:
         st.error(f"建立类别失败：{exc}")
 
-mode = st.segmented_control("编辑方式", ["卡片", "表格"], default="卡片", key="receipt_edit_mode_release")
-last_mode_key = f"receipt_last_mode_{image_signature}"
-last_mode = st.session_state.get(last_mode_key)
-if last_mode and last_mode != mode:
-    _clear_target_editor_state(image_signature, mode)
-st.session_state[last_mode_key] = mode
-
-if mode == "卡片":
-    edited = _card_editor(draft, categories, image_signature)
-else:
-    visible = draft[_DRAFT_COLUMNS].copy()
-    edited = st.data_editor(
-        visible,
-        hide_index=True,
-        width="stretch",
-        num_rows="dynamic",
-        column_config={
-            "保存": st.column_config.CheckboxColumn("保存"),
-            "日期已确认": st.column_config.CheckboxColumn("日期已确认"),
-            "仍然保存重复": st.column_config.CheckboxColumn("仍然保存重复"),
-            "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD", required=True, max_value=today_my()),
-            "item": st.column_config.TextColumn("项目／商家", required=True, width="large", max_chars=180),
-            "category": st.column_config.SelectboxColumn("类别", options=categories, required=True),
-            "type": st.column_config.SelectboxColumn("类型", options=[EXPENSE, REFUND], required=True),
-            "amount": st.column_config.NumberColumn("金额", min_value=0.01, format="RM %.2f", required=True),
-            "note": st.column_config.TextColumn("备注", width="large", max_chars=1000),
-            "receipt_id": None,
-            "flow_subtype": None,
-        },
-        key=f"receipt_editor_release_{image_signature}",
-    )
-    edited = pd.DataFrame(edited)
+visible = draft[_DRAFT_COLUMNS].copy()
+editor_height = min(max(220, 36 * (len(visible) + 1)), 520)
+edited = st.data_editor(
+    visible,
+    hide_index=True,
+    width="stretch",
+    height=editor_height,
+    num_rows="dynamic",
+    column_config={
+        "保存": st.column_config.CheckboxColumn("保存"),
+        "日期已确认": st.column_config.CheckboxColumn("日期已确认", help="AI 无法读出日期时必须由你确认后才能保存"),
+        "仍然保存重复": st.column_config.CheckboxColumn("仍然保存重复", help="只有确认两笔相同交易都真实存在时才勾选"),
+        "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD", required=True, max_value=today_my()),
+        "item": st.column_config.TextColumn("项目／商家", required=True, width="large", max_chars=180),
+        "category": st.column_config.SelectboxColumn("类别", options=categories, required=True),
+        "type": st.column_config.SelectboxColumn("类型", options=[EXPENSE, REFUND], required=True),
+        "amount": st.column_config.NumberColumn("金额", min_value=0.01, format="RM %.2f", required=True),
+        "note": st.column_config.TextColumn("备注", width="large", max_chars=1000),
+        "receipt_id": None,
+        "flow_subtype": None,
+    },
+    key=f"receipt_editor_release_{image_signature}",
+)
+edited = pd.DataFrame(edited)
 
 # Receipt root and semantic line IDs are generated from the complete final human
-# draft. The line IDs are stable across OCR reordering, enabling a later scan to
-# safely complete only lines that were intentionally omitted on an earlier save.
+# draft. The line IDs stay stable across OCR reordering, enabling safe partial completion.
 identity_rows = edited.to_dict("records") if not edited.empty else []
 root_id = receipt_root_id(payload, identity_rows)
 edited = pd.DataFrame(add_line_ids(identity_rows, root_id))
@@ -371,18 +299,20 @@ existing = _duplicate_keys(transactions)
 statuses, candidates = evaluate_receipt_candidates(edited, existing)
 summary = edited.copy()
 summary["状态"] = statuses
-st.dataframe(
-    summary[["保存", "日期已确认", "仍然保存重复", "date", "item", "category", "type", "amount", "状态"]],
-    hide_index=True,
-    width="stretch",
-    column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")},
-)
+with st.expander("查看项目状态", expanded=False):
+    st.dataframe(
+        summary[["保存", "日期已确认", "仍然保存重复", "date", "item", "category", "type", "amount", "状态"]],
+        hide_index=True,
+        width="stretch",
+        column_config={"amount": st.column_config.NumberColumn("金额", format="RM %.2f")},
+    )
 
 duplicate_blocked = sum(status == "疑似重复（未保存）" for status in statuses)
 needs_date = sum(status == "需确认日期" for status in statuses)
 expense_total = sum(candidate.normalized["amount"] for candidate in candidates if candidate.normalized["type"] == EXPENSE)
 refund_total = sum(candidate.normalized["amount"] for candidate in candidates if candidate.normalized["type"] == REFUND)
-a, b, c, d, e = st.columns(5, gap="small")
+a, b, c = st.columns(3)
+d, e = st.columns(2)
 a.metric("准备保存", f"{len(candidates)} 笔")
 b.metric("重复待确认", f"{duplicate_blocked} 笔")
 c.metric("日期待确认", f"{needs_date} 笔")
@@ -390,7 +320,7 @@ d.metric("退款／折扣", money(refund_total))
 e.metric("净支出", money(expense_total - refund_total))
 
 # During partial-completion mode only missing lines are candidates, so comparing
-# those missing lines alone with the full receipt payable would be misleading.
+# those lines alone with the full receipt payable would be misleading.
 reconciliation = None if partial_saved else reconcile_receipt_total(candidates, payload.get("receipt_total"))
 difference_needs_confirm = False
 if partial_saved:
@@ -404,6 +334,7 @@ elif reconciliation:
             f"准备保存的账本金额与收据总额 {money(reconciliation['receipt_total'])} 相差 "
             f"{money(abs(reconciliation['difference']))}。请检查漏项、附加费用、折扣或退款方向。"
         )
+
 confirm_difference = (
     st.checkbox(
         "我已检查总额差异，仍确认按当前项目保存。",
