@@ -7,9 +7,10 @@ Pydantic numeric constraints such as ``gt=0`` are emitted as JSON Schema
 The validators below enforce the same rules locally without exposing unsupported
 range keywords to Gemini.
 
-The Gemini client also gets an explicit 30-second HTTP timeout. Without it, a
-vision request can remain stuck indefinitely if the upstream connection becomes
-silent. The existing retry wrapper in ``ai.py`` will still retry transient errors.
+V2 did not impose a short client-side timeout, so slower receipt vision requests
+were allowed to finish. V3 keeps a safety bound to avoid indefinite hangs, but uses
+a 90-second HTTP timeout so normal slow Gemini responses are not cut off at 30s.
+The existing retry wrapper in ``ai.py`` still handles transient upstream errors.
 """
 
 from __future__ import annotations
@@ -64,7 +65,7 @@ class _ReceiptResultCompat(BaseModel):
 def _get_ai_client_with_timeout() -> genai.Client:
     return genai.Client(
         api_key=st.secrets["GOOGLE_API_KEY"],
-        http_options=types.HttpOptions(timeout=30_000),
+        http_options=types.HttpOptions(timeout=90_000),
     )
 
 
