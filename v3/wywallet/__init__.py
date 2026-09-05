@@ -1,16 +1,24 @@
 """WY Wallet V3 shared application package.
 
-Keep the receipt structured-output schema compatible with Gemini while retaining
-local validation. Pydantic numeric constraints such as ``gt=0`` are emitted as
-JSON Schema ``exclusiveMinimum`` and are rejected by the current google-genai
-schema adapter. The validators below enforce the same rules without exposing
-unsupported range keywords to Gemini.
+Compatibility shims for Gemini structured output and request timeouts.
+
+Pydantic numeric constraints such as ``gt=0`` are emitted as JSON Schema
+``exclusiveMinimum`` and are rejected by the current google-genai schema adapter.
+The validators below enforce the same rules locally without exposing unsupported
+range keywords to Gemini.
+
+The Gemini client also gets an explicit 30-second HTTP timeout. Without it, a
+vision request can remain stuck indefinitely if the upstream connection becomes
+silent. The existing retry wrapper in ``ai.py`` will still retry transient errors.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
+import streamlit as st
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field, field_validator
 
 from . import ai as _ai
@@ -52,8 +60,17 @@ class _ReceiptResultCompat(BaseModel):
         return value
 
 
-# recognize_receipt() resolves these module globals at call time, so replacing the
-# two schema classes fixes Gemini structured output without changing the rest of
-# the finance AI pipeline.
+@st.cache_resource(show_spinner=False)
+def _get_ai_client_with_timeout() -> genai.Client:
+    return genai.Client(
+        api_key=st.secrets["GOOGLE_API_KEY"],
+        http_options=types.HttpOptions(timeout=30_000),
+    )
+
+
+# ai.py resolves these module globals at call time, so replacing them here fixes
+# Gemini structured output and prevents a stalled request from hanging forever
+# without changing the rest of the finance AI pipeline.
 _ai.ReceiptTransaction = _ReceiptTransactionCompat
 _ai.ReceiptResult = _ReceiptResultCompat
+_ai.get_ai_client = _get_ai_client_with_timeout
