@@ -69,7 +69,6 @@ def test_receipt_page_recomputes_identity_after_human_edits_and_scopes_confirmat
     source = _source("v3/pages/receipt.py")
     assert "receipt_draft_" in source
     assert "_store_draft" in source
-    assert "_clear_target_editor_state" in source
     assert "_clear_receipt_session_state" in source
     assert "flow_subtype" in source
     assert "physical_payload" in source
@@ -77,7 +76,10 @@ def test_receipt_page_recomputes_identity_after_human_edits_and_scopes_confirmat
     assert "insert_transactions" not in source
     assert "_date_future" in source
     assert "AI 识别到未来日期" in source
-    assert "a, b, c, d, e = st.columns(5" in source
+    assert "editor_height = min(max(220" in source
+    assert "a, b, c = st.columns(3)" in source
+    assert "d, e = st.columns(2)" in source
+    assert 'with st.expander("查看项目状态", expanded=False)' in source
     assert "BUILD_ID" not in source
     assert "st.caption(APP_VERSION)" in source
     assert "identity_rows = edited.to_dict" in source
