@@ -97,11 +97,32 @@ def _store_draft(signature: str, frame: pd.DataFrame) -> None:
     st.session_state[_draft_key(signature)] = work[_DRAFT_COLUMNS].to_dict("records")
 
 
-def _clear_receipt_session_state(signature: str) -> None:
+def _clear_target_editor_state(signature: str, mode: str = "表格") -> None:
+    """Clear the current editor plus legacy card keys from earlier V3 builds.
+
+    The compact V2-style table is now the only visible editor, but old Streamlit
+    sessions may still contain card-widget state. Clearing both prevents stale
+    values from leaking across a new scan or a re-recognition of the same image.
+    """
     if not signature:
         return
     st.session_state.pop(f"receipt_editor_release_{signature}", None)
+    legacy_prefixes = [
+        "receipt_keep_", "receipt_date_ok_", "receipt_force_", "receipt_date_",
+        "receipt_type_", "receipt_item_", "receipt_category_", "receipt_amount_", "receipt_note_",
+    ]
+    for key in list(st.session_state):
+        key_text = str(key)
+        if any(key_text.startswith(prefix) for prefix in legacy_prefixes) and f"_{signature}_" in key_text:
+            st.session_state.pop(key, None)
+
+
+def _clear_receipt_session_state(signature: str) -> None:
+    if not signature:
+        return
+    _clear_target_editor_state(signature, "表格")
     st.session_state.pop(_draft_key(signature), None)
+    st.session_state.pop(f"receipt_last_mode_{signature}", None)
     for prefix in [
         "force_whole_receipt_",
         "receipt_difference_confirm_",
@@ -311,8 +332,7 @@ duplicate_blocked = sum(status == "疑似重复（未保存）" for status in st
 needs_date = sum(status == "需确认日期" for status in statuses)
 expense_total = sum(candidate.normalized["amount"] for candidate in candidates if candidate.normalized["type"] == EXPENSE)
 refund_total = sum(candidate.normalized["amount"] for candidate in candidates if candidate.normalized["type"] == REFUND)
-a, b, c = st.columns(3)
-d, e = st.columns(2)
+a, b, c, d, e = st.columns(5, gap="small")
 a.metric("准备保存", f"{len(candidates)} 笔")
 b.metric("重复待确认", f"{duplicate_blocked} 笔")
 c.metric("日期待确认", f"{needs_date} 笔")
