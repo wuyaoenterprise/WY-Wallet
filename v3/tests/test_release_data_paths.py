@@ -77,8 +77,7 @@ def test_receipt_page_recomputes_identity_after_human_edits_and_scopes_confirmat
     assert "_date_future" in source
     assert "AI 识别到未来日期" in source
     assert "editor_height = min(max(220" in source
-    assert "a, b, c = st.columns(3)" in source
-    assert "d, e = st.columns(2)" in source
+    assert "a, b, c, d, e = st.columns(5" in source
     assert 'with st.expander("查看项目状态", expanded=False)' in source
     assert "BUILD_ID" not in source
     assert "st.caption(APP_VERSION)" in source
