@@ -14,7 +14,7 @@ from typing import Literal
 import streamlit as st
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from . import ai as _ai
 
@@ -69,7 +69,35 @@ def _friendly_receipt_error(exc: Exception) -> RuntimeError:
         return RuntimeError("Gemini 当前请求额度或并发暂时受限，请稍后重试。")
     if "timeout" in text or "timed out" in text or "deadline" in text:
         return RuntimeError("Gemini 本次响应超时，请重新识别一次。")
-    return RuntimeError(str(exc))
+    detail = str(exc).strip().replace("\n", " ")
+    if len(detail) > 180:
+        detail = detail[:177] + "..."
+    return RuntimeError(f"Gemini 收据识别失败：{detail}" if detail else "Gemini 收据识别失败，请重新识别。")
+
+
+def _decode_receipt_result(text: str) -> _ReceiptResultCompat:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        raise RuntimeError("AI 返回了空内容")
+    # JSON MIME normally returns raw JSON. Strip a code fence defensively so a
+    # harmless formatting deviation does not turn into a user-visible failure.
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].strip().lower() in {"```", "```json"}:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("AI 返回的收据 JSON 无法解析，请重新识别。") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("AI 返回的收据格式不正确，请重新识别。")
+    try:
+        return _ReceiptResultCompat.model_validate(payload)
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise RuntimeError("AI 返回的收据字段不完整或金额格式异常，请重新识别。") from exc
 
 
 def _recognize_receipt_v2_style(
@@ -130,14 +158,7 @@ def _recognize_receipt_v2_style(
     except Exception as exc:
         raise _friendly_receipt_error(exc) from exc
 
-    text = (response.text or "").strip()
-    if not text:
-        raise RuntimeError("AI 返回了空内容")
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("AI 返回的收据 JSON 无法解析，请重新识别。") from exc
-    return _ReceiptResultCompat.model_validate(payload)
+    return _decode_receipt_result(response.text or "")
 
 
 # Keep V3's downstream safety logic, but make receipt extraction use the V2-style
