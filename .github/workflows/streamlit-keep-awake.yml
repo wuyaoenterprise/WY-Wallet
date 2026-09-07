@@ -1,0 +1,52 @@
+name: Keep WY Wallet Streamlit awake
+
+on:
+  schedule:
+    # GitHub cron uses UTC. Malaysia is UTC+8.
+    # 23:00 UTC = 07:00 MYT (next day)
+    - cron: "0 23 * * *"
+    # 07:00 UTC = 15:00 MYT
+    - cron: "0 7 * * *"
+    # 15:00 UTC = 23:00 MYT
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wake:
+    name: Wake Streamlit app
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping WY Wallet twice
+        env:
+          APP_URL: "https://wy-wallet-crgzso5tldztcphlmnm97m.streamlit.app/"
+        shell: bash
+        run: |
+          set +e
+          for attempt in 1 2; do
+            http_code="$(curl \
+              --location \
+              --silent \
+              --show-error \
+              --connect-timeout 15 \
+              --max-time 60 \
+              --retry 2 \
+              --retry-delay 5 \
+              --retry-all-errors \
+              --user-agent "Mozilla/5.0 WY-Wallet-KeepAwake/1.0" \
+              --output /dev/null \
+              --write-out "%{http_code}" \
+              "$APP_URL")"
+            curl_exit=$?
+            echo "Attempt ${attempt}: curl_exit=${curl_exit}, HTTP=${http_code:-none}"
+            if [ "$attempt" -eq 1 ]; then
+              sleep 20
+            fi
+          done
+
+          # This is a best-effort wake-up task. A temporary network or Streamlit
+          # outage should not make the repository's normal CI look broken.
+          exit 0
