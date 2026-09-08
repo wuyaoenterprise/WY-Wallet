@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import calendar
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -20,6 +22,125 @@ def _pie_with_other(category_summary: pd.DataFrame, top_n: int = 8) -> pd.DataFr
     if remainder > 0:
         top = pd.concat([top, pd.DataFrame([{"category": "其余类别", "amount": remainder}])], ignore_index=True)
     return top
+
+
+def _render_monthly_expense_calendar(effects: pd.DataFrame, year: int, month: int) -> None:
+    """Render the legacy daily-spending calendar with V3 refund semantics.
+
+    The large amount in each date cell is gross spending, matching the old
+    calendar's meaning. Refunds are shown separately so a refund can never make
+    it look as if the original purchase did not happen.
+    """
+    if effects.empty:
+        gross_by_day: dict[int, float] = {}
+        refund_by_day: dict[int, float] = {}
+    else:
+        work = effects.copy()
+        work["day"] = pd.to_datetime(work["date"], errors="coerce").dt.day
+        gross_by_day = (
+            work[work["type"] == EXPENSE]
+            .groupby("day")["amount"]
+            .sum()
+            .astype(float)
+            .to_dict()
+        )
+        refund_by_day = (
+            work[work["type"] == REFUND]
+            .groupby("day")["amount"]
+            .sum()
+            .astype(float)
+            .to_dict()
+        )
+
+    weeks = calendar.Calendar(firstweekday=0).monthdayscalendar(int(year), int(month))
+    now = now_my()
+    today_key = (now.year, now.month, now.day)
+    weekday_labels = ["一", "二", "三", "四", "五", "六", "日"]
+
+    cells: list[str] = []
+    for label in weekday_labels:
+        cells.append(f'<div class="wy-cal-head">{label}</div>')
+
+    for week in weeks:
+        for day in week:
+            if day == 0:
+                cells.append('<div class="wy-cal-cell wy-cal-empty"></div>')
+                continue
+
+            gross = float(gross_by_day.get(day, 0.0) or 0.0)
+            refund = float(refund_by_day.get(day, 0.0) or 0.0)
+            has_flow = gross > 0 or refund > 0
+            is_today = (int(year), int(month), int(day)) == today_key
+            classes = ["wy-cal-cell"]
+            if has_flow:
+                classes.append("wy-cal-active")
+            if is_today:
+                classes.append("wy-cal-today")
+
+            amount_html = f'<div class="wy-cal-amt">RM {gross:,.2f}</div>' if gross > 0 else '<div class="wy-cal-amt wy-cal-zero">—</div>'
+            refund_html = f'<div class="wy-cal-refund">退款 RM {refund:,.2f}</div>' if refund > 0 else '<div class="wy-cal-refund">&nbsp;</div>'
+            today_html = '<span class="wy-cal-today-tag">今天</span>' if is_today else ""
+            cells.append(
+                f'<div class="{" ".join(classes)}">'
+                f'<div class="wy-cal-day">{day}{today_html}</div>'
+                f'{amount_html}{refund_html}'
+                '</div>'
+            )
+
+    html = f"""
+    <style>
+      .wy-cal-wrap {{
+        width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+        margin: .25rem 0 1rem 0;
+      }}
+      .wy-cal-grid {{
+        min-width: 610px; display: grid; grid-template-columns: repeat(7, minmax(78px, 1fr));
+        gap: 6px;
+      }}
+      .wy-cal-head {{
+        text-align: center; font-size: .78rem; font-weight: 700;
+        color: color-mix(in srgb, var(--text-color) 68%, transparent);
+        padding: 3px 0 5px 0;
+      }}
+      .wy-cal-cell {{
+        min-height: 86px; padding: 8px 7px; border-radius: 10px;
+        border: 1px solid color-mix(in srgb, var(--text-color) 13%, transparent);
+        background: color-mix(in srgb, var(--secondary-background-color) 86%, transparent);
+        box-sizing: border-box;
+      }}
+      .wy-cal-empty {{ opacity: .22; border-style: dashed; }}
+      .wy-cal-active {{
+        border-color: color-mix(in srgb, var(--primary-color) 54%, transparent);
+        background: color-mix(in srgb, var(--primary-color) 10%, var(--secondary-background-color));
+      }}
+      .wy-cal-today {{ box-shadow: inset 0 0 0 2px var(--primary-color); }}
+      .wy-cal-day {{
+        font-size: .76rem; font-weight: 700;
+        color: color-mix(in srgb, var(--text-color) 72%, transparent);
+        min-height: 20px;
+      }}
+      .wy-cal-today-tag {{
+        margin-left: 4px; font-size: .58rem; font-weight: 700; color: var(--primary-color);
+      }}
+      .wy-cal-amt {{
+        margin-top: 5px; font-size: .91rem; line-height: 1.15; font-weight: 800;
+        color: var(--text-color); white-space: nowrap;
+      }}
+      .wy-cal-zero {{ opacity: .35; font-weight: 500; }}
+      .wy-cal-refund {{
+        margin-top: 5px; min-height: 16px; font-size: .64rem;
+        color: color-mix(in srgb, var(--text-color) 62%, transparent); white-space: nowrap;
+      }}
+      @media (max-width: 700px) {{
+        .wy-cal-grid {{ min-width: 560px; gap: 5px; }}
+        .wy-cal-cell {{ min-height: 78px; padding: 7px 6px; }}
+        .wy-cal-amt {{ font-size: .82rem; }}
+      }}
+    </style>
+    <div class="wy-cal-wrap"><div class="wy-cal-grid">{''.join(cells)}</div></div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+    st.caption("日历主金额＝当天毛消费；退款另列。报表中的「净支出」仍会自动扣除退款。手机可左右滑动日历。")
 
 
 def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
@@ -165,14 +286,19 @@ def render(transactions: pd.DataFrame, invalid_rows: pd.DataFrame) -> None:
             st.caption(f"历史预测区间：{money(float(forecast['low']))} ～ {money(float(forecast['high']))}")
 
         effects = analytics.expense_effect_frame(selected)
+        section_title(f"{month}月 开销日历")
+        _render_monthly_expense_calendar(effects, year, month)
+
         if effects.empty:
             st.info("该月没有支出或退款。")
         else:
+            section_title("每日净支出")
             daily = effects.assign(day=effects["date"].dt.day).groupby("day")["expense_effect"].sum().reset_index(name="amount")
             fig = px.bar(daily, x="day", y="amount", labels={"day": "日期", "amount": "净支出 (RM)"})
             fig.update_xaxes(dtick=1)
             fig.update_yaxes(tickprefix="RM ")
             render_chart(fig, height=370)
+            section_title("星期平均净支出")
             weekday = analytics.weekday_average(selected, year, month)
             fig = px.bar(weekday, x="星期", y="平均每个该星期", labels={"平均每个该星期": "平均净支出 (RM)"})
             fig.update_yaxes(tickprefix="RM ")
