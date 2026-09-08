@@ -1,9 +1,6 @@
 name: Keep WY Wallet Streamlit awake
 
 on:
-  push:
-    paths:
-      - ".github/workflows/streamlit-keep-awake.yml"
   schedule:
     # GitHub Actions is busiest at the start of each hour, so run 15 minutes
     # before the desired Malaysia times to reduce schedule delays.
