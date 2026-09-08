@@ -1,6 +1,9 @@
 name: Keep WY Wallet Streamlit awake
 
 on:
+  push:
+    paths:
+      - ".github/workflows/streamlit-keep-awake.yml"
   schedule:
     # GitHub Actions is busiest at the start of each hour, so run 15 minutes
     # before the desired Malaysia times to reduce schedule delays.
@@ -122,8 +125,6 @@ jobs:
                       click_wake_button()
                       continue
 
-                  # A non-sleeping Streamlit page loaded in a real browser is enough:
-                  # it either woke the app or refreshed the activity timer.
                   if len(current.strip()) >= 20:
                       print("WY Wallet is awake and browser traffic reached the app.")
                       print(f"Final page title: {driver.title!r}")
