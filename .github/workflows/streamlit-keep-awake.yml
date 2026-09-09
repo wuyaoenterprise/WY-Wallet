@@ -1,9 +1,6 @@
 name: Keep WY Wallet Streamlit awake
 
 on:
-  push:
-    paths:
-      - ".github/workflows/streamlit-keep-awake.yml"
   schedule:
     # GitHub cron uses UTC. Run every 4 hours at :17 to avoid the busy top of hour.
     # Malaysia (UTC+8): 06:17, 10:17, 14:17, 18:17, 22:17, 02:17.
