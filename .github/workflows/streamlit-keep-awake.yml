@@ -1,11 +1,6 @@
 name: Keep WY Wallet Streamlit awake
 
 on:
-  # Temporary path-scoped push trigger so this workflow can self-test immediately
-  # when its own logic changes. Remove after the test run succeeds.
-  push:
-    paths:
-      - ".github/workflows/streamlit-keep-awake.yml"
   schedule:
     # GitHub cron uses UTC. Run every 4 hours at :17 to avoid the busy top of hour.
     # Malaysia (UTC+8): 06:17, 10:17, 14:17, 18:17, 22:17, 02:17.
@@ -238,10 +233,9 @@ jobs:
                       print("App remained on the sleeping page after wake attempts.")
                       sys.exit(1)
 
-              # Important: do not require body text. Streamlit can keep the shell empty
-              # while its websocket/app session is connecting. Holding a real Chrome
-              # session open is the activity we need; this also avoids the old false
-              # failures caused by `body.text == ''`.
+              # Do not require body text: Streamlit can keep the shell empty while
+              # its frontend session is connecting. The real Chrome session itself
+              # is the activity signal, so keep it open long enough to register.
               print("Holding the real browser session open for 75 seconds to register activity.")
               hold_deadline = time.time() + 75
               next_log = time.time()
