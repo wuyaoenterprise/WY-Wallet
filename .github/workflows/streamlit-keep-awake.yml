@@ -1,11 +1,15 @@
 name: Keep WY Wallet Streamlit awake
 
 on:
+  # Temporary path-scoped push trigger so this workflow can self-test immediately
+  # when its own logic changes. Remove after the test run succeeds.
+  push:
+    paths:
+      - ".github/workflows/streamlit-keep-awake.yml"
   schedule:
-    # GitHub Actions is busiest at the start of each hour, so run 15 minutes
-    # before the desired Malaysia times to reduce schedule delays.
-    # Malaysia is UTC+8: 22:45/06:45/14:45 UTC = 06:45/14:45/22:45 MYT.
-    - cron: "45 22,6,14 * * *"
+    # GitHub cron uses UTC. Run every 4 hours at :17 to avoid the busy top of hour.
+    # Malaysia (UTC+8): 06:17, 10:17, 14:17, 18:17, 22:17, 02:17.
+    - cron: "17 22,2,6,10,14,18 * * *"
   workflow_dispatch:
 
 permissions:
@@ -13,19 +17,43 @@ permissions:
 
 jobs:
   wake:
-    name: Wake Streamlit app with a real browser
+    name: Keep Streamlit session active with a real browser
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Install Selenium client
-        run: python -m pip install --quiet selenium
-
-      - name: Open app and wake it if sleeping
+      - name: Lightweight HTTP preflight
         env:
           APP_URL: "https://wy-wallet-crgzso5tldztcphlmnm97m.streamlit.app/"
         shell: bash
         run: |
-          python - <<'PY'
+          set +e
+          curl \
+            --silent \
+            --show-error \
+            --connect-timeout 15 \
+            --max-time 45 \
+            --user-agent "Mozilla/5.0 WY-Wallet-KeepAwake/2.0" \
+            --dump-header /tmp/wy_headers.txt \
+            --output /tmp/wy_page.html \
+            "$APP_URL"
+          code=$?
+          echo "HTTP preflight curl exit: ${code}"
+          echo "--- response headers ---"
+          sed -n '1,25p' /tmp/wy_headers.txt 2>/dev/null || true
+          echo "--- response body sample ---"
+          head -c 800 /tmp/wy_page.html 2>/dev/null || true
+          echo
+          exit 0
+
+      - name: Install Selenium client
+        run: python -m pip install --quiet selenium
+
+      - name: Open app, wake if needed, and hold a real session
+        env:
+          APP_URL: "https://wy-wallet-crgzso5tldztcphlmnm97m.streamlit.app/"
+        shell: bash
+        run: |
+          python -u - <<'PY'
           import os
           import sys
           import time
@@ -44,17 +72,23 @@ jobs:
           options.add_argument("--disable-gpu")
           options.add_argument("--window-size=1280,900")
           options.add_argument("--lang=en-US")
+          options.page_load_strategy = "eager"
 
           driver = webdriver.Chrome(options=options)
-          driver.set_page_load_timeout(90)
+          driver.set_page_load_timeout(45)
 
           sleep_markers = (
               "gone to sleep due to inactivity",
               "get this app back up",
               "this app has gone to sleep",
+              "app is asleep",
+              "wake this app",
           )
           fatal_markers = (
               "gone over its resource limits",
+              "app does not exist",
+              "you do not have access to this app",
+              "page not found",
               "oh no",
           )
 
@@ -64,76 +98,176 @@ jobs:
               except Exception:
                   return ""
 
+          def source_text() -> str:
+              try:
+                  return (driver.page_source or "").casefold()
+              except Exception:
+                  return ""
+
+          def combined_text() -> str:
+              return body_text() + "\n" + source_text()
+
           def is_sleeping(text: str) -> bool:
               return any(marker in text for marker in sleep_markers)
 
-          def click_wake_button() -> bool:
-              candidates = []
-              xpaths = [
-                  "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'get this app back up')]",
-                  "//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'get this app back up')]",
-                  "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'wake')]",
-              ]
-              for xpath in xpaths:
+          def has_fatal(text: str) -> bool:
+              return any(marker in text for marker in fatal_markers)
+
+          def click_visible_controls() -> bool:
+              needles = ("get this app back up", "wake", "yes")
+              for tag in ("button", "a"):
                   try:
-                      candidates.extend(driver.find_elements(By.XPATH, xpath))
+                      elements = driver.find_elements(By.TAG_NAME, tag)
                   except Exception:
-                      pass
-              for element in candidates:
+                      elements = []
+                  for element in elements:
+                      try:
+                          text = (element.text or "").strip().casefold()
+                          if any(needle in text for needle in needles) and element.is_displayed() and element.is_enabled():
+                              driver.execute_script("arguments[0].click();", element)
+                              print(f"Clicked visible wake control: {text!r}")
+                              return True
+                      except Exception:
+                          continue
+              return False
+
+          def click_shadow_dom_control() -> bool:
+              script = r'''
+              const needles = ['get this app back up', 'wake this app', 'wake', 'yes'];
+              function walk(root) {
+                const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+                for (const el of all) {
+                  if (el.shadowRoot) {
+                    const hit = walk(el.shadowRoot);
+                    if (hit) return hit;
+                  }
+                  if (el.tagName === 'BUTTON' || el.tagName === 'A') {
+                    const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                    if (needles.some(n => text.includes(n))) return el;
+                  }
+                }
+                return null;
+              }
+              const target = walk(document);
+              if (target) { target.click(); return (target.innerText || target.textContent || '').trim(); }
+              return '';
+              '''
+              try:
+                  result = driver.execute_script(script)
+                  if result:
+                      print(f"Clicked shadow-DOM wake control: {result!r}")
+                      return True
+              except Exception as exc:
+                  print(f"Shadow-DOM wake scan failed: {exc}")
+              return False
+
+          def click_inside_iframes() -> bool:
+              try:
+                  frames = driver.find_elements(By.TAG_NAME, "iframe")
+              except Exception:
+                  frames = []
+              for frame in frames:
                   try:
-                      if element.is_displayed() and element.is_enabled():
-                          driver.execute_script("arguments[0].click();", element)
-                          print("Clicked Streamlit wake-up control.")
+                      driver.switch_to.frame(frame)
+                      if click_visible_controls() or click_shadow_dom_control():
+                          driver.switch_to.default_content()
                           return True
                   except Exception:
-                      continue
+                      pass
+                  finally:
+                      try:
+                          driver.switch_to.default_content()
+                      except Exception:
+                          pass
               return False
+
+          def click_wake_control() -> bool:
+              return click_visible_controls() or click_shadow_dom_control() or click_inside_iframes()
+
+          def log_state(label: str) -> str:
+              text = combined_text()
+              try:
+                  title = driver.title
+              except Exception:
+                  title = ""
+              try:
+                  current_url = driver.current_url
+              except Exception:
+                  current_url = ""
+              try:
+                  ready = driver.execute_script("return document.readyState")
+              except Exception:
+                  ready = "unknown"
+              print(f"{label}: title={title!r} url={current_url!r} readyState={ready!r} sleeping={is_sleeping(text)} fatal={has_fatal(text)} body_chars={len(body_text())} source_chars={len(source_text())}")
+              return text
 
           try:
               try:
                   driver.get(app_url)
               except TimeoutException:
-                  print("Initial page load timed out; continuing to inspect the page.")
+                  print("Initial browser load timed out; inspecting the partially loaded page.")
 
-              time.sleep(5)
-              text = body_text()
-              print(f"Initial page title: {driver.title!r}")
-              print(f"Initial state: {'sleeping' if is_sleeping(text) else 'not sleeping'}")
+              time.sleep(6)
+              text = log_state("Initial state")
+
+              if has_fatal(text):
+                  print("Streamlit returned a fatal app/access/resource page.")
+                  print(body_text()[:1200])
+                  sys.exit(1)
 
               if is_sleeping(text):
-                  if not click_wake_button():
-                      print("Sleeping page detected but the wake-up control could not be found.")
-                      print(text[:1200])
+                  print("Sleeping page detected. Attempting to wake it.")
+                  clicked = click_wake_control()
+                  if not clicked:
+                      print("Could not find a wake control in normal DOM, shadow DOM, or iframes.")
+                      print(body_text()[:1200])
                       sys.exit(1)
 
-              deadline = time.time() + 150
-              last_text = text
-              while time.time() < deadline:
-                  time.sleep(8)
-                  current = body_text()
-                  last_text = current
-
-                  if any(marker in current for marker in fatal_markers):
-                      print("Streamlit returned an application/resource error instead of the app.")
-                      print(current[:1200])
+                  wake_deadline = time.time() + 150
+                  while time.time() < wake_deadline:
+                      time.sleep(10)
+                      text = log_state("Wake poll")
+                      if has_fatal(text):
+                          print("A fatal Streamlit page appeared while waking.")
+                          sys.exit(1)
+                      if not is_sleeping(text):
+                          print("Sleeping page cleared.")
+                          break
+                      click_wake_control()
+                  else:
+                      print("App remained on the sleeping page after wake attempts.")
                       sys.exit(1)
 
-                  if is_sleeping(current):
-                      click_wake_button()
-                      continue
+              # Important: do not require body text. Streamlit can keep the shell empty
+              # while its websocket/app session is connecting. Holding a real Chrome
+              # session open is the activity we need; this also avoids the old false
+              # failures caused by `body.text == ''`.
+              print("Holding the real browser session open for 75 seconds to register activity.")
+              hold_deadline = time.time() + 75
+              next_log = time.time()
+              while time.time() < hold_deadline:
+                  time.sleep(5)
+                  text = combined_text()
+                  if has_fatal(text):
+                      print("Fatal Streamlit page detected while holding the session.")
+                      sys.exit(1)
+                  if is_sleeping(text):
+                      print("Sleep page reappeared; attempting another wake click.")
+                      if not click_wake_control():
+                          sys.exit(1)
+                  if time.time() >= next_log:
+                      log_state("Session hold")
+                      next_log = time.time() + 20
 
-                  if len(current.strip()) >= 20:
-                      print("WY Wallet is awake and browser traffic reached the app.")
-                      print(f"Final page title: {driver.title!r}")
-                      sys.exit(0)
+              final_text = log_state("Final state")
+              if has_fatal(final_text) or is_sleeping(final_text):
+                  print("Could not confirm an active non-sleeping Streamlit session.")
+                  sys.exit(1)
 
-                  try:
-                      driver.refresh()
-                  except (TimeoutException, WebDriverException):
-                      pass
-
-              print("Could not confirm that WY Wallet left the sleeping page in time.")
-              print(last_text[:1200])
+              print("WY Wallet keep-awake browser session completed successfully.")
+              sys.exit(0)
+          except WebDriverException as exc:
+              print(f"Browser failure: {exc}")
               sys.exit(1)
           finally:
               driver.quit()
