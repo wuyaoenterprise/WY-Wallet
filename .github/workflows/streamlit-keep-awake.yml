@@ -1,9 +1,6 @@
 name: Keep WY Wallet Streamlit awake
 
 on:
-  push:
-    paths:
-      - ".github/workflows/streamlit-keep-awake.yml"
   schedule:
     # GitHub cron uses UTC. Run every 3 hours at :37 to leave extra margin
     # against Streamlit's 12-hour inactivity window and avoid the busy top of hour.
