@@ -1,314 +1,56 @@
 name: Keep WY Wallet Streamlit awake
 
 on:
+  push:
+    paths:
+      - ".github/workflows/streamlit-keep-awake.yml"
   schedule:
-    # GitHub cron uses UTC. Run every 4 hours at :17 to avoid the busy top of hour.
-    # Malaysia (UTC+8): 06:17, 10:17, 14:17, 18:17, 22:17, 02:17.
-    - cron: "17 22,2,6,10,14,18 * * *"
+    # GitHub cron uses UTC. Run every 6 hours at :23 to avoid the busy top of hour.
+    # Malaysia (UTC+8): 02:23, 08:23, 14:23, 20:23.
+    - cron: "23 0,6,12,18 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: wy-wallet-streamlit-heartbeat
+  cancel-in-progress: false
 
 jobs:
-  wake:
-    name: Keep Streamlit session active with a real browser
+  reset-idle-timer:
+    name: Reset Streamlit inactivity countdown
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
-      - name: Lightweight HTTP preflight
-        env:
-          APP_URL: "https://wy-wallet-crgzso5tldztcphlmnm97m.streamlit.app/?embed=true"
+      - name: Checkout deployed V3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/wy-wallet-v3
+          fetch-depth: 0
+
+      - name: Push an empty heartbeat commit to the deployed branch
         shell: bash
         run: |
-          set +e
-          curl \
-            --silent \
-            --show-error \
-            --connect-timeout 15 \
-            --max-time 45 \
-            --user-agent "Mozilla/5.0 WY-Wallet-KeepAwake/3.0" \
-            --dump-header /tmp/wy_headers.txt \
-            --output /tmp/wy_page.html \
-            "$APP_URL"
-          code=$?
-          echo "HTTP preflight curl exit: ${code}"
-          echo "--- response headers ---"
-          sed -n '1,25p' /tmp/wy_headers.txt 2>/dev/null || true
-          echo "--- response body sample ---"
-          head -c 500 /tmp/wy_page.html 2>/dev/null || true
-          echo
-          exit 0
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Install Selenium client
-        run: python -m pip install --quiet selenium
+          target_branch="agent/wy-wallet-v3"
+          for attempt in 1 2 3; do
+            git fetch origin "$target_branch"
+            git checkout -B streamlit-heartbeat "origin/$target_branch"
+            git commit --allow-empty -m "chore: reset Streamlit inactivity countdown [skip ci]"
 
-      - name: Open app, wake if needed, and verify Streamlit websocket
-        env:
-          APP_URL: "https://wy-wallet-crgzso5tldztcphlmnm97m.streamlit.app/?embed=true"
-        shell: bash
-        run: |
-          python -u - <<'PY'
-          import json
-          import os
-          import sys
-          import time
+            if git push origin "HEAD:$target_branch"; then
+              echo "Heartbeat commit pushed to $target_branch."
+              echo "This commit changes no application files; it only resets the Community Cloud inactivity countdown."
+              exit 0
+            fi
 
-          from selenium import webdriver
-          from selenium.common.exceptions import TimeoutException, WebDriverException
-          from selenium.webdriver.chrome.options import Options
-          from selenium.webdriver.common.by import By
+            echo "Push attempt $attempt failed because the branch moved; retrying on the latest head."
+            sleep 10
+          done
 
-          app_url = os.environ["APP_URL"]
-
-          options = Options()
-          options.add_argument("--headless=new")
-          options.add_argument("--no-sandbox")
-          options.add_argument("--disable-dev-shm-usage")
-          options.add_argument("--disable-gpu")
-          options.add_argument("--window-size=1280,900")
-          options.add_argument("--lang=en-US")
-          options.page_load_strategy = "eager"
-          options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-
-          driver = webdriver.Chrome(options=options)
-          driver.set_page_load_timeout(45)
-
-          sleep_markers = (
-              "gone to sleep due to inactivity",
-              "get this app back up",
-              "this app has gone to sleep",
-              "app is asleep",
-              "wake this app",
-          )
-          fatal_markers = (
-              "gone over its resource limits",
-              "app does not exist",
-              "you do not have access to this app",
-              "page not found",
-              "oh no",
-          )
-          websocket_seen = False
-          websocket_url = ""
-
-          def body_text() -> str:
-              try:
-                  return driver.find_element(By.TAG_NAME, "body").text.casefold()
-              except Exception:
-                  return ""
-
-          def source_text() -> str:
-              try:
-                  return (driver.page_source or "").casefold()
-              except Exception:
-                  return ""
-
-          def combined_text() -> str:
-              return body_text() + "\n" + source_text()
-
-          def is_sleeping(text: str) -> bool:
-              return any(marker in text for marker in sleep_markers)
-
-          def has_fatal(text: str) -> bool:
-              return any(marker in text for marker in fatal_markers)
-
-          def poll_streamlit_websocket() -> bool:
-              global websocket_seen, websocket_url
-              try:
-                  entries = driver.get_log("performance")
-              except Exception:
-                  entries = []
-              for entry in entries:
-                  try:
-                      msg = json.loads(entry["message"])["message"]
-                  except Exception:
-                      continue
-                  method = msg.get("method", "")
-                  params = msg.get("params", {})
-                  if method == "Network.webSocketCreated":
-                      url = str(params.get("url", ""))
-                      if "_stcore/stream" in url:
-                          websocket_seen = True
-                          websocket_url = url
-                  elif method == "Network.webSocketHandshakeResponseReceived":
-                      response = params.get("response", {}) or {}
-                      url = str(response.get("url", ""))
-                      status = int(response.get("status", 0) or 0)
-                      if "_stcore/stream" in url and status == 101:
-                          websocket_seen = True
-                          websocket_url = url
-              return websocket_seen
-
-          def click_visible_controls() -> bool:
-              needles = ("get this app back up", "wake", "yes")
-              for tag in ("button", "a"):
-                  try:
-                      elements = driver.find_elements(By.TAG_NAME, tag)
-                  except Exception:
-                      elements = []
-                  for element in elements:
-                      try:
-                          text = (element.text or "").strip().casefold()
-                          if any(needle in text for needle in needles) and element.is_displayed() and element.is_enabled():
-                              driver.execute_script("arguments[0].click();", element)
-                              print(f"Clicked visible wake control: {text!r}")
-                              return True
-                      except Exception:
-                          continue
-              return False
-
-          def click_shadow_dom_control() -> bool:
-              script = r'''
-              const needles = ['get this app back up', 'wake this app', 'wake', 'yes'];
-              function walk(root) {
-                const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
-                for (const el of all) {
-                  if (el.shadowRoot) {
-                    const hit = walk(el.shadowRoot);
-                    if (hit) return hit;
-                  }
-                  if (el.tagName === 'BUTTON' || el.tagName === 'A') {
-                    const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-                    if (needles.some(n => text.includes(n))) return el;
-                  }
-                }
-                return null;
-              }
-              const target = walk(document);
-              if (target) { target.click(); return (target.innerText || target.textContent || '').trim(); }
-              return '';
-              '''
-              try:
-                  result = driver.execute_script(script)
-                  if result:
-                      print(f"Clicked shadow-DOM wake control: {result!r}")
-                      return True
-              except Exception as exc:
-                  print(f"Shadow-DOM wake scan failed: {exc}")
-              return False
-
-          def click_inside_iframes() -> bool:
-              try:
-                  frames = driver.find_elements(By.TAG_NAME, "iframe")
-              except Exception:
-                  frames = []
-              for frame in frames:
-                  try:
-                      driver.switch_to.frame(frame)
-                      if click_visible_controls() or click_shadow_dom_control():
-                          return True
-                  except Exception:
-                      pass
-                  finally:
-                      try:
-                          driver.switch_to.default_content()
-                      except Exception:
-                          pass
-              return False
-
-          def click_wake_control() -> bool:
-              return click_visible_controls() or click_shadow_dom_control() or click_inside_iframes()
-
-          def log_state(label: str) -> str:
-              text = combined_text()
-              poll_streamlit_websocket()
-              try:
-                  title = driver.title
-              except Exception:
-                  title = ""
-              try:
-                  current_url = driver.current_url
-              except Exception:
-                  current_url = ""
-              try:
-                  ready = driver.execute_script("return document.readyState")
-              except Exception:
-                  ready = "unknown"
-              print(
-                  f"{label}: title={title!r} url={current_url!r} readyState={ready!r} "
-                  f"sleeping={is_sleeping(text)} fatal={has_fatal(text)} "
-                  f"body_chars={len(body_text())} source_chars={len(source_text())} "
-                  f"streamlit_ws={websocket_seen}"
-              )
-              return text
-
-          try:
-              try:
-                  driver.get(app_url)
-              except TimeoutException:
-                  print("Initial browser load timed out; inspecting the partially loaded page.")
-
-              time.sleep(6)
-              text = log_state("Initial state")
-
-              if has_fatal(text):
-                  print("Streamlit returned a fatal app/access/resource page.")
-                  print(body_text()[:1200])
-                  sys.exit(1)
-
-              if is_sleeping(text):
-                  print("Sleeping page detected. Attempting to wake it.")
-                  if not click_wake_control():
-                      print("Could not find a wake control in normal DOM, shadow DOM, or iframes.")
-                      sys.exit(1)
-
-              connect_deadline = time.time() + 150
-              refreshed = False
-              while time.time() < connect_deadline:
-                  time.sleep(5)
-                  text = log_state("Connect poll")
-                  if has_fatal(text):
-                      print("Fatal Streamlit page detected while connecting.")
-                      sys.exit(1)
-                  if is_sleeping(text):
-                      print("Sleep page detected while connecting; clicking wake control.")
-                      if not click_wake_control():
-                          sys.exit(1)
-                      continue
-                  if poll_streamlit_websocket():
-                      print(f"Confirmed Streamlit websocket: {websocket_url}")
-                      break
-                  if not refreshed and time.time() > connect_deadline - 90:
-                      refreshed = True
-                      print("No Streamlit websocket yet; refreshing browser once.")
-                      try:
-                          driver.refresh()
-                      except (TimeoutException, WebDriverException):
-                          pass
-              else:
-                  print("No Streamlit _stcore/stream websocket was observed. This means the browser did not reach the real app session.")
-                  print("Page source sample:")
-                  print(source_text()[:1200])
-                  sys.exit(1)
-
-              print("Holding confirmed Streamlit session open for 60 seconds.")
-              hold_deadline = time.time() + 60
-              next_log = time.time()
-              while time.time() < hold_deadline:
-                  time.sleep(5)
-                  text = combined_text()
-                  poll_streamlit_websocket()
-                  if has_fatal(text):
-                      print("Fatal Streamlit page detected while holding the session.")
-                      sys.exit(1)
-                  if is_sleeping(text):
-                      print("Sleep page reappeared; attempting another wake click.")
-                      if not click_wake_control():
-                          sys.exit(1)
-                  if time.time() >= next_log:
-                      log_state("Session hold")
-                      next_log = time.time() + 20
-
-              final_text = log_state("Final state")
-              if has_fatal(final_text) or is_sleeping(final_text) or not websocket_seen:
-                  print("Could not confirm an active Streamlit backend session.")
-                  sys.exit(1)
-
-              print("WY Wallet keep-awake reached the real Streamlit backend successfully.")
-              sys.exit(0)
-          except WebDriverException as exc:
-              print(f"Browser failure: {exc}")
-              sys.exit(1)
-          finally:
-              driver.quit()
-          PY
+          echo "Unable to push the Streamlit heartbeat after 3 attempts."
+          exit 1
