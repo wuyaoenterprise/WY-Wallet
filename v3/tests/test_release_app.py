@@ -93,7 +93,6 @@ def test_actual_v3_entrypoint_uses_snapshot_not_legacy_multi_page_loader():
 
 def test_actual_v3_entrypoint_renders_dashboard_with_fake_database():
     at = AppTest.from_string(_script(), default_timeout=25)
-    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
     assert any("DASHBOARD_OK" in text for text in _texts(at))
@@ -101,7 +100,6 @@ def test_actual_v3_entrypoint_renders_dashboard_with_fake_database():
 
 def test_actual_v3_entrypoint_routes_to_transaction_page():
     at = AppTest.from_string(_script("交易记录"), default_timeout=25)
-    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
     assert any("TRANSACTIONS_OK" in text for text in _texts(at))
@@ -109,7 +107,6 @@ def test_actual_v3_entrypoint_routes_to_transaction_page():
 
 def test_actual_v3_entrypoint_routes_to_hardened_ai_page():
     at = AppTest.from_string(_script("AI 洞察"), default_timeout=25)
-    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
     assert any("AI_OK" in text for text in _texts(at))
@@ -117,26 +114,25 @@ def test_actual_v3_entrypoint_routes_to_hardened_ai_page():
 
 def test_actual_v3_entrypoint_routes_to_hardened_reports_page():
     at = AppTest.from_string(_script("分析报表"), default_timeout=25)
-    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
     assert any("REPORTS_OK" in text for text in _texts(at))
 
 
-def test_missing_access_configuration_fails_closed_before_database_read():
-    at = AppTest.from_file(str(APP), default_timeout=20)
-    at.run()
-    assert not at.exception
-    assert any("安全设置未完成" in text for text in _texts(at))
+def test_public_access_experiment_is_explicit_and_password_gate_disabled():
+    access_source = (ROOT / "v3" / "wywallet" / "access.py").read_text(encoding="utf-8")
+    assert "PUBLIC_ACCESS_EXPERIMENT = True" in access_source
+    assert 'return "public"' in access_source
+    assert "WEB_ACCESS_PASSWORD" in access_source
 
 
-def test_password_gate_is_rendered_before_database_read():
-    at = AppTest.from_file(str(APP), default_timeout=20)
+def test_configured_password_is_ignored_during_public_access_experiment():
+    at = AppTest.from_string(_script(), default_timeout=25)
     at.secrets["WEB_ACCESS_PASSWORD"] = "test-secret"
     at.run()
     assert not at.exception
-    assert any("WY Wallet 私人访问" in text for text in _texts(at))
-    assert any(element.label == "访问密码" for element in at.text_input)
+    assert any("DASHBOARD_OK" in text for text in _texts(at))
+    assert not any(element.label == "访问密码" for element in at.text_input)
 
 
 def test_database_failure_is_visible_instead_of_blank_screen():
@@ -146,7 +142,6 @@ def test_database_failure_is_visible_instead_of_blank_screen():
         1,
     )
     at = AppTest.from_string(script, default_timeout=20)
-    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
     assert any("无法连接财务数据库" in text for text in _texts(at))
@@ -155,15 +150,13 @@ def test_database_failure_is_visible_instead_of_blank_screen():
 
 def test_truncated_ledger_does_not_render_partial_dashboard_totals():
     at = AppTest.from_string(_script(truncated=True), default_timeout=20)
-    at.secrets["ALLOW_UNPROTECTED_ACCESS"] = "true"
     at.run()
     assert not at.exception
 
 
-def test_receipt_page_cannot_bypass_password_gate():
-    receipt_page = ROOT / "v3" / "pages" / "receipt.py"
-    at = AppTest.from_file(str(receipt_page), default_timeout=20)
-    at.secrets["WEB_ACCESS_PASSWORD"] = "test-secret"
-    at.run()
-    assert not at.exception
-    assert any("WY Wallet 私人访问" in text for text in _texts(at))
+def test_receipt_page_uses_same_public_access_experiment():
+    receipt_page = (ROOT / "v3" / "pages" / "receipt.py").read_text(encoding="utf-8")
+    assert "require_access()" in receipt_page
+    assert "touch_access()" in receipt_page
+    access_source = (ROOT / "v3" / "wywallet" / "access.py").read_text(encoding="utf-8")
+    assert "PUBLIC_ACCESS_EXPERIMENT = True" in access_source
