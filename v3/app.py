@@ -22,7 +22,7 @@ inject_css()
 
 
 def main() -> None:
-    access_mode = require_access()
+    require_access()
 
     loading = st.empty()
     loading.info("正在连接财务数据库…")
@@ -70,7 +70,7 @@ def main() -> None:
         st.caption(f"数据读取：{snap['loaded_at'] or '未知'}")
         st.caption(APP_VERSION)
         st.caption(f"Malaysia time · {TIMEZONE_NAME}")
-        st.caption("🔒 密码保护已启用" if access_mode == "password" else "🔒 由平台私有访问保护")
+        st.caption("🔓 公开访问测试中（密码保护已停用）")
 
     if truncated and navigation in {"总览", "分析报表", "AI 洞察"}:
         page_header("数据量超过互动统计上限", "为避免把部分数据误当完整账本，本页已停止计算。")
