@@ -138,11 +138,13 @@ def test_main_app_uses_one_snapshot_without_nested_fragments():
     assert "@st.fragment" not in source
 
 
-def test_password_gate_supports_enter_submit():
+def test_public_access_experiment_has_no_local_password_widgets():
     source = _source("v3/wywallet/access.py")
-    assert "st.form(" in source
-    assert "enter_to_submit=True" in source
-    assert "st.form_submit_button" in source
+    assert "PUBLIC_ACCESS_EXPERIMENT = True" in source
+    assert 'return "public"' in source
+    assert "st.form(" not in source
+    assert "st.text_input" not in source
+    assert "st.form_submit_button" not in source
 
 
 def test_dashboard_month_window_is_calendar_anchored_and_equal_width():
