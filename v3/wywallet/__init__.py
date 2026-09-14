@@ -75,7 +75,7 @@ def _friendly_receipt_error(exc: Exception) -> RuntimeError:
     if "503" in text or "high demand" in text or "unavailable" in text:
         return RuntimeError("Gemini 当前繁忙，可用 Flash 模型都暂时无法处理请求，请稍后重试；这不是收据或账本数据问题。")
     if "429" in text or "resource exhausted" in text or "quota" in text:
-        return RuntimeError("Gemini Flash 可用模型的额度或请求频率目前都受限，请稍后重试。")
+        return RuntimeError("Gemini Flash 可用模型的请求额度或请求频率目前都受限，请稍后重试。")
     if "timeout" in text or "timed out" in text or "deadline" in text:
         return RuntimeError("Gemini 本次响应超时，请重新识别一次。")
     detail = str(exc).strip().replace("\n", " ")
