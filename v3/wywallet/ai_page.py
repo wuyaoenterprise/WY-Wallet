@@ -57,6 +57,59 @@ def _may_use_local_split(question: str, state: dict) -> bool:
     ])
 
 
+def _canonical_driver_category(value: str) -> str:
+    text = str(value or "").strip()
+    compact = text.casefold().replace(" ", "")
+    if compact in {"打油", "加油", "油费", "油費", "汽油", "fuel", "petrol"}:
+        return "加油"
+    if compact in {"過路費", "过路费", "toll"}:
+        return "过路费"
+    if compact in {"話費", "话费", "電話費", "电话费"}:
+        return "话费"
+    if compact in {"停車費", "停车费", "停車", "停车"}:
+        return "停车费"
+    return text
+
+
+def _normalized_comparison_explanation(result: dict) -> str:
+    comparison = result.get("comparison") or {}
+    total_delta = float(comparison.get("delta") or 0)
+    raw_categories = list((result.get("comparison_drivers") or {}).get("categories") or [])
+    grouped: dict[str, dict[str, float | str]] = {}
+    for row in raw_categories:
+        name = _canonical_driver_category(str(row.get("category") or "其他"))
+        bucket = grouped.setdefault(name, {"category": name, "current": 0.0, "previous": 0.0, "delta": 0.0})
+        bucket["current"] = float(bucket["current"]) + float(row.get("current") or 0)
+        bucket["previous"] = float(bucket["previous"]) + float(row.get("previous") or 0)
+        bucket["delta"] = float(bucket["delta"]) + float(row.get("delta") or 0)
+
+    categories = [row for row in grouped.values() if abs(float(row["delta"])) >= 0.005]
+    categories.sort(key=lambda row: abs(float(row["delta"])), reverse=True)
+    if abs(total_delta) < 0.005:
+        return "两期净支出几乎没有变化。固定项目即使金额很大，只要两期相同，对差额的贡献就是 RM 0。"
+
+    sign = 1 if total_delta > 0 else -1
+    direction = "增加" if total_delta > 0 else "减少"
+    drivers = [row for row in categories if float(row["delta"]) * sign > 0][:5]
+    offsets = [row for row in categories if float(row["delta"]) * sign < 0][:4]
+
+    def fmt(row: dict[str, float | str]) -> str:
+        return (
+            f"{row['category']} {float(row['delta']):+,.2f}"
+            f"（本期 {float(row['current']):,.2f} / 上期 {float(row['previous']):,.2f}）"
+        )
+
+    lines = [
+        f"真正要看的是两期**差额**，不是本期金额最大的项目。本期相对上期净支出{direction} **RM {abs(total_delta):,.2f}**。"
+    ]
+    if drivers:
+        lines.append("真正推动变化的类别：" + "；".join(fmt(row) for row in drivers) + "。")
+    if offsets:
+        lines.append("同时这些类别在抵消变化：" + "；".join(fmt(row) for row in offsets) + "。")
+    lines.append("房租、车贷等固定支出如果两期都有且金额相同，差额就是 RM 0，因此不会再被列成‘上涨原因’。")
+    return "\n\n".join(lines)
+
+
 def _render_list(plan_dict: dict, transactions: pd.DataFrame) -> None:
     try:
         plan = FinanceQueryPlan.model_validate(plan_dict)
@@ -156,7 +209,10 @@ def render(transactions: pd.DataFrame) -> None:
                         plan = plan_finance_question(question, selected_year, fresh, current_state, history)
                         result = execute_finance_plan(plan, fresh)
                         summary = authoritative_summary_markdown(result)
-                        explanation = answer_finance_question(question, result)
+                        if result.get("comparison") and (plan.aggregation or "amount") in {"amount", "average_day", "average_month"}:
+                            explanation = _normalized_comparison_explanation(result)
+                        else:
+                            explanation = answer_finance_question(question, result)
                         next_state = state_from_plan(plan, result)
                 st.markdown(summary)
                 if explanation:
