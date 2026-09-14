@@ -44,6 +44,19 @@ def _friendly_ai_query_error(exc: Exception) -> str:
     return f"AI 查询失败：{detail}" if detail else "AI 查询失败，请重试。"
 
 
+def _may_use_local_split(question: str, state: dict) -> bool:
+    compact = "".join(str(question or "").casefold().split())
+    monthly_or_split = any(token in compact for token in [
+        "每月", "每个月", "每個月", "按月", "月度", "月份", "月分布", "月分佈", "monthly",
+        "分开", "分開", "拆开", "拆開", "分别", "分別", "各自", "各別", "独立", "獨立",
+    ])
+    if not monthly_or_split:
+        return False
+    return bool(state.get("multi_subjects")) or any(token in compact for token in [
+        "加油", "打油", "油费", "油費", "petrol", "fuel", "餐饮", "餐飲", "吃", "food",
+    ])
+
+
 def _render_list(plan_dict: dict, transactions: pd.DataFrame) -> None:
     try:
         plan = FinanceQueryPlan.model_validate(plan_dict)
@@ -128,7 +141,11 @@ def render(transactions: pd.DataFrame) -> None:
                 with st.spinner("正在读取最新账本并计算..."):
                     fresh = fresh_snapshot()["transactions"]
                     current_state = st.session_state.get("ai_conversation_state") or {}
-                    direct = try_local_finance_answer(question, selected_year, fresh, current_state)
+                    direct = (
+                        try_local_finance_answer(question, selected_year, fresh, current_state)
+                        if _may_use_local_split(question, current_state)
+                        else None
+                    )
                     plan = None
                     result = None
                     explanation = ""
