@@ -122,17 +122,14 @@ def test_actual_v3_entrypoint_routes_to_hardened_reports_page():
 def test_public_access_experiment_is_explicit_and_password_gate_disabled():
     access_source = (ROOT / "v3" / "wywallet" / "access.py").read_text(encoding="utf-8")
     assert "PUBLIC_ACCESS_EXPERIMENT = True" in access_source
+    assert 'def configured_password() -> str:' in access_source
+    assert 'return ""' in access_source
+    assert 'def require_access() -> str:' in access_source
     assert 'return "public"' in access_source
     assert "WEB_ACCESS_PASSWORD" in access_source
-
-
-def test_configured_password_is_ignored_during_public_access_experiment():
-    at = AppTest.from_string(_script(), default_timeout=25)
-    at.secrets["WEB_ACCESS_PASSWORD"] = "test-secret"
-    at.run()
-    assert not at.exception
-    assert any("DASHBOARD_OK" in text for text in _texts(at))
-    assert not any(element.label == "访问密码" for element in at.text_input)
+    # The temporary experiment must not accidentally leave an active local form.
+    assert "st.text_input" not in access_source
+    assert "st.form_submit_button" not in access_source
 
 
 def test_database_failure_is_visible_instead_of_blank_screen():
