@@ -16,12 +16,32 @@ from .ai_release import (
     finance_list_frame,
     plan_finance_question,
     state_from_plan,
+    try_local_finance_answer,
 )
 from .config import EXPENSE, REFUND, TYPE_LABELS
 from .db import ledger_signature
 from .snapshot import fresh_snapshot
 from .ui import page_header, render_chart, section_title
 from .ux import page_slice
+
+
+def _friendly_ai_query_error(exc: Exception) -> str:
+    text = str(exc).casefold()
+    if "429" in text or "resource_exhausted" in text or "resource exhausted" in text or "quota" in text:
+        if "perday" in text or "per_day" in text or "requestsperday" in text or "free_tier_requests" in text:
+            return (
+                "Gemini 免费层今天的请求额度已用完。WY Wallet 的本地精确查询仍然可用；"
+                "常见金额、月份、比较，以及加油/餐饮分开统计会优先直接由 Python 处理，不再浪费 Gemini 请求。"
+            )
+        return "Gemini 当前请求频率受限，请稍后再试；本地可识别的财务查询仍会继续工作。"
+    if "503" in text or "unavailable" in text or "high demand" in text:
+        return "Gemini 当前繁忙；请稍后再试。可以本地计算的账单问题不受影响。"
+    if "timeout" in text or "timed out" in text or "deadline" in text:
+        return "Gemini 本次响应超时；请重试。可以本地计算的账单问题不受影响。"
+    detail = str(exc).strip().replace("\n", " ")
+    if len(detail) > 220:
+        detail = detail[:217] + "..."
+    return f"AI 查询失败：{detail}" if detail else "AI 查询失败，请重试。"
 
 
 def _render_list(plan_dict: dict, transactions: pd.DataFrame) -> None:
@@ -45,7 +65,7 @@ def _render_list(plan_dict: dict, transactions: pd.DataFrame) -> None:
 
 def render(transactions: pd.DataFrame) -> None:
     touch_access()
-    page_header("AI 洞察", "Gemini 3.7 只负责理解和解释；数字、退款、日期、平均和比较全部由 Python 本地计算。")
+    page_header("AI 洞察", "Gemini 3.7 只负责理解真正模糊的问题；数字、退款、日期、平均、比较和常见账单查询优先由 Python 本地计算。")
     years = sorted(transactions["date"].dt.year.unique().tolist(), reverse=True) if not transactions.empty else []
     if not years:
         st.info("暂无数据可分析。")
@@ -77,7 +97,7 @@ def render(transactions: pd.DataFrame) -> None:
             st.session_state["macro_year"] = selected_year
             st.rerun()
         except Exception as exc:
-            st.error(f"AI 归类失败：{exc}")
+            st.error(_friendly_ai_query_error(exc).replace("AI 查询失败", "AI 归类失败", 1))
     if reset.button("清除分析", width="stretch"):
         st.session_state["ai_chat_history"] = []
         st.session_state["ai_conversation_state"] = {}
@@ -93,13 +113,13 @@ def render(transactions: pd.DataFrame) -> None:
 
     st.divider()
     section_title("与账单对话")
-    st.caption("金额、列表和比较由 Python 精确计算；查询时只 fresh 读取一次数据库 snapshot。")
+    st.caption("金额、列表、比较和常见月度查询由 Python 精确计算；只有真正需要语义理解时才调用 Gemini。每次提问只 fresh 读取一次数据库 snapshot。")
     history = st.session_state.setdefault("ai_chat_history", [])
     for message in history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    question = st.chat_input("例如：1到8月平均每月打油多少？8月跟6月比？最大一笔支出？")
+    question = st.chat_input("例如：今年每个月加油和餐饮分开看；本月为什么比上月高？最大一笔支出？")
     if question:
         try:
             with st.chat_message("user"):
@@ -107,28 +127,38 @@ def render(transactions: pd.DataFrame) -> None:
             with st.chat_message("assistant"):
                 with st.spinner("正在读取最新账本并计算..."):
                     fresh = fresh_snapshot()["transactions"]
-                    plan = plan_finance_question(question, selected_year, fresh, st.session_state.get("ai_conversation_state"), history)
-                    result = execute_finance_plan(plan, fresh)
-                    summary = authoritative_summary_markdown(result)
-                    explanation = answer_finance_question(question, result)
+                    current_state = st.session_state.get("ai_conversation_state") or {}
+                    direct = try_local_finance_answer(question, selected_year, fresh, current_state)
+                    plan = None
+                    result = None
+                    explanation = ""
+                    if direct is not None:
+                        summary = str(direct["markdown"])
+                        next_state = dict(direct["state"])
+                    else:
+                        plan = plan_finance_question(question, selected_year, fresh, current_state, history)
+                        result = execute_finance_plan(plan, fresh)
+                        summary = authoritative_summary_markdown(result)
+                        explanation = answer_finance_question(question, result)
+                        next_state = state_from_plan(plan, result)
                 st.markdown(summary)
                 if explanation:
-                    st.caption("AI 解释")
+                    st.caption("差异解释")
                     st.markdown(explanation)
             history.extend([
                 {"role": "user", "content": question},
                 {"role": "assistant", "content": summary + ("\n\n" + explanation if explanation else "")},
             ])
             st.session_state["ai_chat_history"] = history[-30:]
-            st.session_state["ai_conversation_state"] = state_from_plan(plan, result)
+            st.session_state["ai_conversation_state"] = next_state
             st.session_state["ai_data_signature"] = ledger_signature(fresh)
-            if plan.intent == "list":
+            if plan is not None and plan.intent == "list":
                 st.session_state["ai_last_list_plan"] = plan.model_dump()
                 st.rerun()
             else:
                 st.session_state.pop("ai_last_list_plan", None)
         except Exception as exc:
-            st.error(f"AI 查询失败：{exc}")
+            st.error(_friendly_ai_query_error(exc))
 
     if st.session_state.get("ai_last_list_plan"):
         _render_list(st.session_state["ai_last_list_plan"], transactions)
