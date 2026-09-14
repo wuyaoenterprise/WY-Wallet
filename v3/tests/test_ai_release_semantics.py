@@ -5,7 +5,7 @@ from datetime import date
 import pandas as pd
 
 from wywallet import ai as base_ai
-from wywallet import ai_release, product_logic
+from wywallet import ai_page, ai_release, product_logic
 from wywallet.ai import FinanceQueryPlan
 
 
@@ -114,6 +114,25 @@ def test_comparison_explanation_uses_period_deltas_not_large_fixed_costs(monkeyp
     assert "真正要看的是两期**差额**" in explanation
     assert "午餐 +20.00" in explanation
     assert "车贷" in explanation and "不应被当成上涨原因" in explanation
+
+
+def test_ui_comparison_explanation_merges_fuel_category_renames():
+    result = {
+        "comparison": {"delta": 94.38},
+        "comparison_drivers": {
+            "categories": [
+                {"category": "打油", "current": 90.40, "previous": 0.0, "delta": 90.40},
+                {"category": "加油", "current": 0.0, "previous": 112.40, "delta": -112.40},
+                {"category": "過路費", "current": 88.20, "previous": 0.0, "delta": 88.20},
+                {"category": "午餐", "current": 98.50, "previous": 153.90, "delta": -55.40},
+            ]
+        },
+    }
+    explanation = ai_page._normalized_comparison_explanation(result)
+    assert "加油 -22.00（本期 90.40 / 上期 112.40）" in explanation
+    assert "过路费 +88.20" in explanation
+    assert "加油 +90.40" not in explanation
+    assert "加油 -112.40" not in explanation
 
 
 def test_nonpositive_comparison_base_has_no_percent(monkeypatch):
