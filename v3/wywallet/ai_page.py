@@ -30,14 +30,14 @@ def _friendly_ai_query_error(exc: Exception) -> str:
     if "429" in text or "resource_exhausted" in text or "resource exhausted" in text or "quota" in text:
         if "perday" in text or "per_day" in text or "requestsperday" in text or "free_tier_requests" in text:
             return (
-                "Gemini 免费层今天的请求额度已用完。WY Wallet 的本地精确查询仍然可用；"
-                "常见金额、月份、比较，以及加油/餐饮分开统计会优先直接由 Python 处理，不再浪费 Gemini 请求。"
+                "Gemini Flash 自动切换链里当前可用模型今天的免费请求额度都已用完。"
+                "WY Wallet 的本地精确查询仍然可用；常见金额、月份、比较，以及加油/餐饮分开统计会继续由 Python 处理。"
             )
-        return "Gemini 当前请求频率受限，请稍后再试；本地可识别的财务查询仍会继续工作。"
+        return "Gemini Flash 当前请求频率受限；系统已尝试备用模型，本地可识别的财务查询仍会继续工作。"
     if "503" in text or "unavailable" in text or "high demand" in text:
-        return "Gemini 当前繁忙；请稍后再试。可以本地计算的账单问题不受影响。"
+        return "Gemini Flash 当前繁忙；系统已尝试备用模型，请稍后再试。可以本地计算的账单问题不受影响。"
     if "timeout" in text or "timed out" in text or "deadline" in text:
-        return "Gemini 本次响应超时；请重试。可以本地计算的账单问题不受影响。"
+        return "Gemini Flash 本次响应超时；系统已尝试备用模型，请重试。可以本地计算的账单问题不受影响。"
     detail = str(exc).strip().replace("\n", " ")
     if len(detail) > 220:
         detail = detail[:217] + "..."
@@ -131,7 +131,7 @@ def _render_list(plan_dict: dict, transactions: pd.DataFrame) -> None:
 
 def render(transactions: pd.DataFrame) -> None:
     touch_access()
-    page_header("AI 洞察", "Gemini 3.7 只负责理解真正模糊的问题；数字、退款、日期、平均、比较和常见账单查询优先由 Python 本地计算。")
+    page_header("AI 洞察", "Gemini Flash 按 3.8 → 3.7 → 3.6 → 3.5 自动切换，只负责理解真正模糊的问题；数字、退款、日期、平均、比较和常见账单查询优先由 Python 本地计算。")
     years = sorted(transactions["date"].dt.year.unique().tolist(), reverse=True) if not transactions.empty else []
     if not years:
         st.info("暂无数据可分析。")
@@ -179,7 +179,7 @@ def render(transactions: pd.DataFrame) -> None:
 
     st.divider()
     section_title("与账单对话")
-    st.caption("金额、列表、比较和常见月度查询由 Python 精确计算；只有真正需要语义理解时才调用 Gemini。每次提问只 fresh 读取一次数据库 snapshot。")
+    st.caption("金额、列表、比较和常见月度查询由 Python 精确计算；只有真正需要语义理解时才调用 Gemini Flash，并在额度受限时自动切换备用模型。每次提问只 fresh 读取一次数据库 snapshot。")
     history = st.session_state.setdefault("ai_chat_history", [])
     for message in history:
         with st.chat_message(message["role"]):

@@ -75,7 +75,11 @@ jobs:
           reject 'runpy\.run_path'
           grep -q 'ROOT_ENTRYPOINT_RETIRED = True' app.py
           grep -q 'V3_ENTRYPOINT = "v3/app.py"' app.py
-          grep -q 'GEMINI_MODEL = "gemini-3.7-flash"' v3/wywallet/config.py
+          grep -q 'GEMINI_MODEL = "gemini-3.8-flash"' v3/wywallet/config.py
+          grep -q 'GEMINI_MODELS = (' v3/wywallet/config.py
+          grep -q '"gemini-3.7-flash"' v3/wywallet/config.py
+          grep -q '"gemini-3.6-flash"' v3/wywallet/config.py
+          grep -q '"gemini-3.5-flash"' v3/wywallet/config.py
           grep -q 'APP_TITLE = "WY Wallet V3"' v3/wywallet/config.py
           grep -q 'APP_VERSION = "v3.2.5"' v3/wywallet/config.py
           grep -q 'showSidebarNavigation = false' .streamlit/config.toml
@@ -98,6 +102,7 @@ jobs:
           import wywallet.db
           import wywallet.exporting
           import wywallet.ledger_codec
+          import wywallet.model_router
           import wywallet.product_logic
           import wywallet.receipt
           import wywallet.receipt_identity

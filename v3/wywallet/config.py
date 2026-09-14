@@ -10,7 +10,13 @@ TIMEZONE_NAME = "Asia/Kuala_Lumpur"
 TIMEZONE = ZoneInfo(TIMEZONE_NAME)
 CURRENCY = "MYR"
 CURRENCY_SYMBOL = "RM"
-GEMINI_MODEL = "gemini-3.7-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_MODELS = (
+    GEMINI_MODEL,
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+)
 EXPENSE = "Expense"
 INCOME = "Income"
 REFUND = "Refund"

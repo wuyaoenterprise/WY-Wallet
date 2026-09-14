@@ -4,6 +4,10 @@ Receipt recognition intentionally uses the simpler V2-style Gemini request path:
 plain JSON output, no Pydantic response_schema sent to Gemini, and no artificial
 short HTTP timeout. V3 still keeps its local validation, duplicate protection,
 receipt identity, reconciliation and save safeguards after recognition.
+
+Gemini requests use the ordered Flash fallback chain configured in config.py:
+3.8 -> 3.7 -> 3.6 -> 3.5. Quota/rate-limit failures move to the next model
+without changing the local finance calculation path.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from . import ai as _ai
+from .model_router import generate_content_with_fallback
 
 
 class _ReceiptTransactionCompat(BaseModel):
@@ -61,12 +66,16 @@ def _get_ai_client_v2_style() -> genai.Client:
     return genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 
 
+def _generate_content_with_model_fallback(**kwargs):
+    return generate_content_with_fallback(_ai.get_ai_client, **kwargs)
+
+
 def _friendly_receipt_error(exc: Exception) -> RuntimeError:
     text = str(exc).casefold()
     if "503" in text or "high demand" in text or "unavailable" in text:
-        return RuntimeError("Gemini 当前繁忙，服务端暂时无法处理请求，请稍后重试；这不是收据或账本数据问题。")
-    if "429" in text or "resource exhausted" in text:
-        return RuntimeError("Gemini 当前请求额度或并发暂时受限，请稍后重试。")
+        return RuntimeError("Gemini 当前繁忙，可用 Flash 模型都暂时无法处理请求，请稍后重试；这不是收据或账本数据问题。")
+    if "429" in text or "resource exhausted" in text or "quota" in text:
+        return RuntimeError("Gemini Flash 可用模型的额度或请求频率目前都受限，请稍后重试。")
     if "timeout" in text or "timed out" in text or "deadline" in text:
         return RuntimeError("Gemini 本次响应超时，请重新识别一次。")
     detail = str(exc).strip().replace("\n", " ")
@@ -162,8 +171,10 @@ def _recognize_receipt_v2_style(
 
 
 # Keep V3's downstream safety logic, but make receipt extraction use the V2-style
-# lightweight request path. Other AI features continue using their existing schemas.
+# lightweight request path. Route all Gemini calls through the ordered model
+# fallback so quota exhaustion on one Flash model does not stop the feature.
 _ai.ReceiptTransaction = _ReceiptTransactionCompat
 _ai.ReceiptResult = _ReceiptResultCompat
 _ai.get_ai_client = _get_ai_client_v2_style
+_ai._generate_content_with_retry = _generate_content_with_model_fallback
 _ai.recognize_receipt = _recognize_receipt_v2_style
